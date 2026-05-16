@@ -6,7 +6,7 @@ import type { AuditStore } from '../ports/audit-store.js'
 import type { Clock } from '../ports/clock.js'
 import { SystemClock } from '../ports/clock.js'
 import { captureToolException, type ToolExceptionHandler } from '../safe-tool.js'
-import type { AnyAgentToolDefinition } from '../tool.js'
+import type { AgentToolDefinition } from '../tool.js'
 
 /**
  * Translate a registry of `AgentToolDefinition`s into a Vercel AI SDK
@@ -32,8 +32,13 @@ import type { AnyAgentToolDefinition } from '../tool.js'
  * tenants — keep tool descriptions tenant-invariant.
  */
 export interface BuildAiSdkToolsArgs<TCtx extends BaseToolContext> {
-    /** Registry already filtered for the active surface + actor + isAvailable. */
-    registry: readonly AnyAgentToolDefinition<TCtx>[]
+    /**
+     * Registry already filtered for the active surface + actor + isAvailable.
+     * Typed as `AgentToolDefinition<any, any, TCtx>` (not `AnyAgentToolDefinition`)
+     * so arrays mixing tools with different concrete input/output shapes unify
+     * — the `any` slot allows the variance TS otherwise rejects.
+     */
+    registry: readonly AgentToolDefinition<any, any, TCtx>[]
     /** Request context — passed to every `execute` call. */
     ctx: TCtx
     /** Optional audit port. Calls are fire-and-forget. */

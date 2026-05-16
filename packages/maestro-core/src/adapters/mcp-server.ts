@@ -4,7 +4,7 @@ import type { ZodTypeAny } from 'zod'
 import type { BaseToolContext } from '../context.js'
 import type { AuditStore } from '../ports/audit-store.js'
 import { type Clock, SystemClock } from '../ports/clock.js'
-import type { AnyAgentToolDefinition } from '../tool.js'
+import type { AgentToolDefinition } from '../tool.js'
 
 /**
  * Register a registry of `AgentToolDefinition`s on an MCP server
@@ -26,7 +26,11 @@ import type { AnyAgentToolDefinition } from '../tool.js'
  */
 export interface RegisterMcpToolsArgs<TCtx extends BaseToolContext> {
     server: McpServer
-    registry: readonly AnyAgentToolDefinition<TCtx>[]
+    /**
+     * Registry already filtered for the surface. Typed with `any` slots so
+     * arrays of tools with different concrete input/output shapes unify.
+     */
+    registry: readonly AgentToolDefinition<any, any, TCtx>[]
     ctx: TCtx
     audit?: AuditStore
     clock?: Clock
