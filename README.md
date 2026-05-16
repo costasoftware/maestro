@@ -4,9 +4,14 @@ In-process tool-calling agent runtime for SaaS products. Powers user-support cha
 
 ## Packages
 
-| Package | Purpose |
-| --- | --- |
-| `@costasoftware/maestro-core` | Runtime kernel — `defineAgentTool`, `ToolEnvelope`, `BaseToolContext`, AI SDK + MCP adapters, port interfaces. |
+| Package | Status | npm |
+| --- | --- | --- |
+| [`maestro-core`](./packages/maestro-core) | `0.1.0` released | [npmjs.com/package/maestro-core](https://www.npmjs.com/package/maestro-core) |
+| `maestro-react` | placeholder reserved | — |
+| `maestro-eval` | placeholder reserved | — |
+| `maestro-mcp` | placeholder reserved | — |
+| `maestro-telemetry` | placeholder reserved | — |
+| `create-maestro` | placeholder reserved | — |
 
 ## Status
 
@@ -23,3 +28,7 @@ pnpm test
 ## Design
 
 See [DESIGN.md](./DESIGN.md) for the full architecture, port interfaces, migration plan, and what v1 explicitly does not solve.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

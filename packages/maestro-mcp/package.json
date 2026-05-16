@@ -1,0 +1,21 @@
+{
+    "name": "maestro-mcp",
+    "version": "0.0.0",
+    "description": "Reserved name — future Model Context Protocol client adapter for the Maestro agent runtime. See https://github.com/costasoftware/maestro.",
+    "license": "Apache-2.0",
+    "author": "Costa Software",
+    "homepage": "https://github.com/costasoftware/maestro/tree/main/packages/maestro-mcp#readme",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/costasoftware/maestro.git",
+        "directory": "packages/maestro-mcp"
+    },
+    "bugs": {
+        "url": "https://github.com/costasoftware/maestro/issues"
+    },
+    "keywords": ["maestro", "mcp", "model-context-protocol", "ai", "agent", "reserved"],
+    "files": ["README.md"],
+    "publishConfig": {
+        "access": "public"
+    }
+}

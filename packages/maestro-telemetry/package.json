@@ -1,0 +1,21 @@
+{
+    "name": "maestro-telemetry",
+    "version": "0.0.0",
+    "description": "Reserved name — future typed control-plane client for the Maestro agent runtime. See https://github.com/costasoftware/maestro.",
+    "license": "Apache-2.0",
+    "author": "Costa Software",
+    "homepage": "https://github.com/costasoftware/maestro/tree/main/packages/maestro-telemetry#readme",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/costasoftware/maestro.git",
+        "directory": "packages/maestro-telemetry"
+    },
+    "bugs": {
+        "url": "https://github.com/costasoftware/maestro/issues"
+    },
+    "keywords": ["maestro", "telemetry", "observability", "ai", "agent", "reserved"],
+    "files": ["README.md"],
+    "publishConfig": {
+        "access": "public"
+    }
+}

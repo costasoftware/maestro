@@ -1,0 +1,21 @@
+{
+    "name": "create-maestro",
+    "version": "0.0.0",
+    "description": "Reserved name — future scaffolder for new Maestro agent projects. See https://github.com/costasoftware/maestro.",
+    "license": "Apache-2.0",
+    "author": "Costa Software",
+    "homepage": "https://github.com/costasoftware/maestro/tree/main/packages/create-maestro#readme",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/costasoftware/maestro.git",
+        "directory": "packages/create-maestro"
+    },
+    "bugs": {
+        "url": "https://github.com/costasoftware/maestro/issues"
+    },
+    "keywords": ["maestro", "scaffold", "create", "ai", "agent", "reserved"],
+    "files": ["README.md"],
+    "publishConfig": {
+        "access": "public"
+    }
+}

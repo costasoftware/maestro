@@ -1,0 +1,21 @@
+{
+    "name": "maestro-eval",
+    "version": "0.0.0",
+    "description": "Reserved name — future eval harness (golden paths, injection, traffic replay) for the Maestro agent runtime. See https://github.com/costasoftware/maestro.",
+    "license": "Apache-2.0",
+    "author": "Costa Software",
+    "homepage": "https://github.com/costasoftware/maestro/tree/main/packages/maestro-eval#readme",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/costasoftware/maestro.git",
+        "directory": "packages/maestro-eval"
+    },
+    "bugs": {
+        "url": "https://github.com/costasoftware/maestro/issues"
+    },
+    "keywords": ["maestro", "eval", "ai", "agent", "promptfoo", "reserved"],
+    "files": ["README.md"],
+    "publishConfig": {
+        "access": "public"
+    }
+}

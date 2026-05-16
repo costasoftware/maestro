@@ -1,0 +1,21 @@
+{
+    "name": "maestro-react",
+    "version": "0.0.0",
+    "description": "Reserved name — future React hooks (useMaestroChat, tool-result rendering) for the Maestro agent runtime. See https://github.com/costasoftware/maestro.",
+    "license": "Apache-2.0",
+    "author": "Costa Software",
+    "homepage": "https://github.com/costasoftware/maestro/tree/main/packages/maestro-react#readme",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/costasoftware/maestro.git",
+        "directory": "packages/maestro-react"
+    },
+    "bugs": {
+        "url": "https://github.com/costasoftware/maestro/issues"
+    },
+    "keywords": ["maestro", "react", "ai", "agent", "reserved"],
+    "files": ["README.md"],
+    "publishConfig": {
+        "access": "public"
+    }
+}
