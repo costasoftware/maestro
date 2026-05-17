@@ -2,6 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import { convertToModelMessages, streamText, type UIMessage } from 'ai'
 
 import { buildAiSdkTools } from '../adapters/ai-sdk.js'
+import { applyCacheBreakpoints } from '../cache-control.js'
 import type { BaseToolContext } from '../context.js'
 import { estimateCost } from '../cost.js'
 import { selectChatModel, type ModelTier } from '../models.js'
@@ -15,6 +16,7 @@ import { NoopTelemetrySink, type TelemetrySink } from '../ports/telemetry-sink.j
 import type { TurnRecord, TurnStore } from '../ports/turn-store.js'
 import type { AgentToolDefinition } from '../tool.js'
 
+import { loadMemoryBlock } from './memory.js'
 import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
 
 /**
@@ -23,7 +25,7 @@ import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
  * (build tools, call streamText, persist turn, emit telemetry, handle
  * errors, return SSE response).
  *
- * Current scope (slice 3):
+ * Current scope (slice 4):
  *   ✓ Model selection via `selectChatModel`
  *   ✓ Provider key resolution via `ModelKeyProvider` port
  *   ✓ AI SDK tool building via the `buildAiSdkTools` adapter
@@ -33,16 +35,16 @@ import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
  *   ✓ SSE Response ready to return from a Next.js route
  *   ✓ Pre-call quota gate via `QuotaStore.check` (throws `AiQuotaDeniedError` on deny)
  *   ✓ Post-call quota record via `QuotaStore.record` (fire-and-forget)
+ *   ✓ Memory load via `MemoryStore.load` (formatted into dynamic system segment)
+ *   ✓ Anthropic prompt-cache breakpoints via `applyCacheBreakpoints`
  *
- * Deferred to later slices:
- *   ☐ Memory load + inject into system prompt — slice 4
- *   ☐ Cache-breakpoint placement on the system prompt — slice 4
- *   ☐ Empty-recovery classifier — slice 5
- *   ☐ OpenAI fallback when Anthropic rate-limits — slice 5
- *
- * Until those slices land, callers that need cache / memory should
- * continue to wire `streamText` directly and gradually adopt sub-features
- * (selectChatModel, buildAiSdkTools, estimateCost) one at a time.
+ * Deferred to later slices / releases:
+ *   ☐ Empty-recovery classifier — exposed as a helper in slice 5;
+ *     calling routes decide what to do with the signal.
+ *   ☐ OpenAI fallback retry wrapper inside runChatTurn — slice 5
+ *     ships the helper primitives (`shouldFallback`, `mapModelToOpenAI`)
+ *     so hosts can compose the retry themselves. Built-in retry
+ *     wrapper deferred to 0.2.1 — mid-stream switching is invasive.
  */
 export interface RunChatTurnPorts {
     turnStore: TurnStore
@@ -66,8 +68,24 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext> {
     messages: UIMessage[]
     /** Eligible tool registry — host pre-filters for surface/availability. */
     tools: readonly AgentToolDefinition<any, any, TCtx>[]
-    /** System prompt. Plain string for slice 2; cache-aware split lands in slice 4. */
-    systemPrompt: string
+    /**
+     * Split system prompt for Anthropic prompt-cache hits.
+     *
+     *   `static`  — tenant-invariant content. Hashed for the cache key.
+     *               MUST NOT contain per-tenant interpolated strings;
+     *               numbers / IDs are fine if they live in `dynamic`
+     *               instead.
+     *   `dynamic` — tenant-specific content (timezone label, business
+     *               name in prose, current time, memory facts). Rendered
+     *               after the cache breakpoint so it never influences
+     *               the cache key. Optional — omit if there's nothing
+     *               tenant-specific to inject.
+     *
+     * Memory facts loaded via the `MemoryStore` port are auto-appended
+     * to `dynamic` before the cache split — hosts don't need to format
+     * them in by hand.
+     */
+    systemPrompt: { static: string; dynamic?: string }
     /** Per-tier model ids. Host resolves from its env layer. */
     models: { fast: string; smart: string; force?: string | null }
     /** Optional hint that bypasses the model heuristic for this turn. */
@@ -90,6 +108,13 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext> {
      * strictly authoritative (compliance, internal-test fixtures).
      */
     failOpenOnQuotaError?: boolean
+    /**
+     * Optional namespace passed to `MemoryStore.load` so a host that
+     * partitions facts (e.g. `'preferences'` vs `'facts'`) can scope
+     * the load. Omit for the default unscoped lookup. Has no effect
+     * when `ports.memoryStore` is not supplied.
+     */
+    memoryNamespace?: string
 }
 
 export async function runChatTurn<TCtx extends BaseToolContext>(
@@ -161,12 +186,73 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
     const model = anthropic(selection.modelId)
 
     // ── 3. Tools (adapter handles per-call audit) ───────────────────
-    const tools = buildAiSdkTools<TCtx>({
+    const rawTools = buildAiSdkTools<TCtx>({
         registry: args.tools,
         ctx: args.ctx,
         audit: args.ports.auditStore,
         clock,
     })
+
+    // ── 3b. Memory pull (optional) ──────────────────────────────────
+    // Load + format memory facts BEFORE the cache split so the facts
+    // land in the dynamic (uncached) segment. Memory varies per
+    // principal — caching it would split the prompt cache by user and
+    // kill cross-tenant reuse.
+    let memoryBlock = ''
+    if (args.ports.memoryStore && args.ctx.principal) {
+        try {
+            memoryBlock = await loadMemoryBlock({
+                memoryStore: args.ports.memoryStore,
+                scope: {
+                    tenantId: args.ctx.tenantId,
+                    principalId: args.ctx.principal.id,
+                    namespace: args.memoryNamespace,
+                },
+            })
+        } catch (e) {
+            // Fail-open — memory is a UX enhancement, not a correctness
+            // requirement. Log and proceed without it.
+            logger.warn('runChatTurn memoryStore.load failed; proceeding without memory', {
+                tenantId: args.ctx.tenantId,
+                error: e instanceof Error ? e.message : String(e),
+            })
+        }
+    }
+
+    // ── 3c. Cache split ─────────────────────────────────────────────
+    // applyCacheBreakpoints renders `system` as a two-element array:
+    //   [0] static  — cached (cacheControl ephemeral marker)
+    //   [1] dynamic — uncached (tenant context + memory + now)
+    // The last tool in the registry also gets the cache marker so the
+    // tool schema block is served from cache on hot turns.
+    const dynamicLines = [args.systemPrompt.dynamic ?? '', memoryBlock]
+        .filter((s) => s.length > 0)
+        .join('\n\n')
+    const nowAtCacheSplit = clock.now()
+    const cached = applyCacheBreakpoints({
+        static: {
+            intro: args.systemPrompt.static,
+            corpus: '',
+            tools: rawTools,
+        },
+        dynamic: {
+            tenant: {
+                id: args.ctx.tenantId,
+                timezone: args.ctx.timezone,
+            },
+            principal: args.ctx.principal ? { id: args.ctx.principal.id } : undefined,
+            nowIso: nowAtCacheSplit.toISOString(),
+        },
+    })
+    // Append the host-supplied dynamic + memory content to the
+    // generated dynamic system segment so it lands AFTER the
+    // breakpoint. The structured tenant context that
+    // applyCacheBreakpoints synthesises is the first dynamic line;
+    // anything host-supplied follows it.
+    const dynamicMsg = cached.system[1]
+    if (dynamicMsg && dynamicLines.length > 0) {
+        dynamicMsg.content = `${dynamicMsg.content}\n${dynamicLines}`
+    }
 
     // ── 4. Reserve assistant turn row ───────────────────────────────
     const startedAt = clock.now()
@@ -184,11 +270,16 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
     })
 
     // ── 5. Stream ───────────────────────────────────────────────────
+    // Pass cached.system as the first messages so the Anthropic prompt
+    // cache picks up the static segment + tool schema on hot turns.
+    // streamText accepts both top-level `system` and inline system
+    // messages in `messages[]`; using inline lets us carry the
+    // cacheControl providerOptions through unchanged.
+    const userMessages = await convertToModelMessages(args.messages)
     const stream = streamText({
         model,
-        system: args.systemPrompt,
-        messages: await convertToModelMessages(args.messages),
-        tools,
+        messages: [...cached.system, ...userMessages],
+        tools: cached.tools,
         abortSignal: args.abortSignal,
         onFinish: async (event) => {
             const finishedAt = clock.now()

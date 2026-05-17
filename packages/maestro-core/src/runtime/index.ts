@@ -1,3 +1,4 @@
+export { formatMemoryBlock, loadMemoryBlock } from './memory.js'
 export {
     AiQuotaDeniedError,
     type AiQuotaDenyPayload,
