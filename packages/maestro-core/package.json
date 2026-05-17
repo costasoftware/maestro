@@ -58,7 +58,8 @@
         "test": "vitest run",
         "lint": "echo \"(lint not yet configured)\" && exit 0",
         "typecheck": "tsc -p tsconfig.build.json --noEmit",
-        "clean": "rm -rf dist .turbo *.tsbuildinfo"
+        "clean": "rm -rf dist .turbo *.tsbuildinfo",
+        "prepublishOnly": "rm -rf dist .turbo *.tsbuildinfo && tsc -p tsconfig.build.json"
     },
     "peerDependencies": {
         "@ai-sdk/anthropic": "^3.0.0",
