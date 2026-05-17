@@ -15,13 +15,15 @@ import { NoopTelemetrySink, type TelemetrySink } from '../ports/telemetry-sink.j
 import type { TurnRecord, TurnStore } from '../ports/turn-store.js'
 import type { AgentToolDefinition } from '../tool.js'
 
+import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
+
 /**
  * Public chat-turn entry point. One call replaces the ~300 LoC of stream
  * orchestration a host route would otherwise write by hand
  * (build tools, call streamText, persist turn, emit telemetry, handle
  * errors, return SSE response).
  *
- * Skeleton scope (slice 2):
+ * Current scope (slice 3):
  *   ✓ Model selection via `selectChatModel`
  *   ✓ Provider key resolution via `ModelKeyProvider` port
  *   ✓ AI SDK tool building via the `buildAiSdkTools` adapter
@@ -29,15 +31,16 @@ import type { AgentToolDefinition } from '../tool.js'
  *   ✓ Telemetry emit via `TelemetrySink` port (default Noop)
  *   ✓ Cost estimate via `estimateCost`
  *   ✓ SSE Response ready to return from a Next.js route
+ *   ✓ Pre-call quota gate via `QuotaStore.check` (throws `AiQuotaDeniedError` on deny)
+ *   ✓ Post-call quota record via `QuotaStore.record` (fire-and-forget)
  *
  * Deferred to later slices:
- *   ☐ Quota gate (`QuotaStore.check` pre-call, `record` post-call) — slice 3
  *   ☐ Memory load + inject into system prompt — slice 4
  *   ☐ Cache-breakpoint placement on the system prompt — slice 4
  *   ☐ Empty-recovery classifier — slice 5
  *   ☐ OpenAI fallback when Anthropic rate-limits — slice 5
  *
- * Until those slices land, callers that need quota / cache / memory should
+ * Until those slices land, callers that need cache / memory should
  * continue to wire `streamText` directly and gradually adopt sub-features
  * (selectChatModel, buildAiSdkTools, estimateCost) one at a time.
  */
@@ -75,6 +78,18 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext> {
     ports: RunChatTurnPorts
     /** Side-effect hook after the assistant turn row is finalised. */
     onTurnFinalized?: (turn: TurnRecord) => void | Promise<void>
+    /**
+     * When true (default) and `ports.quotaStore` is supplied, a thrown
+     * error from the port's `check` method is logged at warn and the
+     * call proceeds anyway. Matches the barbeiro convention — never
+     * block paying customers on a transient Redis blip. Pre-call
+     * `AiQuotaDeniedError` throws (which are intentional) propagate
+     * regardless of this flag.
+     *
+     * Set to false in environments where the deny path must be
+     * strictly authoritative (compliance, internal-test fixtures).
+     */
+    failOpenOnQuotaError?: boolean
 }
 
 export async function runChatTurn<TCtx extends BaseToolContext>(
@@ -83,6 +98,51 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
     const clock = args.ports.clock ?? new SystemClock()
     const logger = args.ports.logger ?? new SilentLogger()
     const telemetry = args.ports.telemetry ?? new NoopTelemetrySink()
+    const failOpenOnQuotaError = args.failOpenOnQuotaError ?? true
+
+    // ── 0. Quota pre-call gate ──────────────────────────────────────
+    // Runs before any LLM/key/storage work so a denied tenant pays
+    // zero side-effects. `AiQuotaDeniedError` is the only error this
+    // block intentionally surfaces; everything else is fail-open by
+    // default so a Redis/Postgres hiccup never blocks paying tenants.
+    if (args.ports.quotaStore) {
+        try {
+            await checkAndEnforce({
+                quotaStore: args.ports.quotaStore,
+                tenantId: args.ctx.tenantId,
+                surface: args.ctx.transport,
+            })
+        } catch (e) {
+            if (e instanceof AiQuotaDeniedError) {
+                // Fire-and-forget telemetry for the deny — it landed
+                // in the audit log via the host's own `record` call
+                // when the over-cap call originally went through;
+                // this just surfaces the deny event for dashboards.
+                void telemetry.emit([
+                    {
+                        type: 'quota.consumed',
+                        tenantId: args.ctx.tenantId,
+                        surface: args.ctx.transport,
+                        window: 'day',
+                        used: e.payload.current,
+                        ceiling: e.payload.ceiling,
+                        denied: true,
+                        occurredAt: clock.now(),
+                    },
+                ])
+                throw e
+            }
+            if (failOpenOnQuotaError) {
+                logger.warn('runChatTurn quotaStore.check failed; failing open', {
+                    tenantId: args.ctx.tenantId,
+                    surface: args.ctx.transport,
+                    error: e instanceof Error ? e.message : String(e),
+                })
+            } else {
+                throw e
+            }
+        }
+    }
 
     // ── 1. Model selection ──────────────────────────────────────────
     const lastUserMessage = [...args.messages].reverse().find((m) => m.role === 'user')
@@ -189,6 +249,37 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
                     turnId,
                     error: e instanceof Error ? e.message : String(e),
                 })
+            }
+
+            // Post-call quota accounting. Fire-and-forget — a slow
+            // ledger write must not stall the SSE finalisation. The
+            // tool-calls count comes from the AI SDK toolCalls list
+            // (may be absent if the turn didn't invoke any tools).
+            if (args.ports.quotaStore) {
+                const toolCallsCount = Array.isArray(
+                    (event as { toolCalls?: unknown }).toolCalls
+                )
+                    ? ((event as { toolCalls: unknown[] }).toolCalls.length)
+                    : 0
+                args.ports.quotaStore
+                    .record({
+                        tenantId: args.ctx.tenantId,
+                        surface: args.ctx.transport,
+                        tokensIn,
+                        tokensOut,
+                        cacheReadTokens,
+                        cacheWriteTokens,
+                        toolCalls: toolCallsCount,
+                        costUsdMicro,
+                        modelId: selection.modelId,
+                        occurredAt: finishedAt,
+                    })
+                    .catch((e: unknown) => {
+                        logger.warn('runChatTurn quotaStore.record failed', {
+                            turnId,
+                            error: e instanceof Error ? e.message : String(e),
+                        })
+                    })
             }
 
             // Telemetry is fire-and-forget; emit failures are swallowed

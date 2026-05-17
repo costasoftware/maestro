@@ -43,6 +43,8 @@ export interface QuotaUsage {
     tokensOut: number
     cacheReadTokens: number
     cacheWriteTokens: number
+    /** Tool invocations attributed to this turn. Drives the `maxCallsPerWindow` ceiling. */
+    toolCalls?: number
     /** USD cost in micro-dollars (integer). */
     costUsdMicro: number
     modelId: string

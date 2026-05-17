@@ -39,3 +39,21 @@ export {
 
 // Ports re-exported at root for ergonomic single-import setups
 export * from './ports/index.js'
+
+// Window-math helpers — host `QuotaStore` impls import these to
+// compute consistent counter keys / TTLs / reset times. Not used
+// directly by `runChatTurn`; exposed for the host port boundary.
+export {
+    DAY_SECONDS,
+    DAY_TTL_SECONDS,
+    dailyCostWindow,
+    dailyTokensWindow,
+    dayKeyUtc,
+    HOUR_SECONDS,
+    HOUR_TTL_SECONDS,
+    hourKeyUtc,
+    hourlyToolCallsWindow,
+    nextUtcHour,
+    nextUtcMidnight,
+    type WindowDescriptor,
+} from './windows.js'
