@@ -16,6 +16,22 @@ export {
     type CachedMessages,
 } from './cache-control.js'
 export {
+    BLENDED_PRICING,
+    estimateCost,
+    MODEL_PRICING,
+    type PricingRow,
+    type TokenUsage,
+} from './cost.js'
+export {
+    DEFAULT_SMART_KEYWORDS,
+    DEFAULT_SMART_LENGTH_THRESHOLD,
+    DEFAULT_SMART_TURN_THRESHOLD,
+    type ModelSelection,
+    type ModelTier,
+    selectChatModel,
+    type SelectModelArgs,
+} from './models.js'
+export {
     captureToolException,
     type ToolExceptionHandler,
     type ToolExceptionTags,
