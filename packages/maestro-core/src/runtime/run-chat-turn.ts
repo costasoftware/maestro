@@ -115,6 +115,23 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext> {
      * when `ports.memoryStore` is not supplied.
      */
     memoryNamespace?: string
+    /**
+     * Optional host-supplied turn id. When provided, the kernel uses
+     * it verbatim for the assistant `TurnRecord.id`. When omitted, the
+     * kernel generates one via the existing
+     * `turn_<epoch>_<requestId?>_<rand>` shape.
+     *
+     * Hosts whose persistence layer uses a different id space
+     * (incrementing integers, externally-supplied UUIDs) pass their
+     * id here so the port impl can update the row by its real key
+     * instead of maintaining a `kernelTurnId → hostRowId` mapping. The
+     * port impl is responsible for parsing the id back to its native
+     * shape (e.g. `Number(turn.id)` for integer primary keys).
+     *
+     * Added in 0.2.1; pre-existing callers continue to get
+     * kernel-generated ids unchanged.
+     */
+    turnId?: string
 }
 
 export async function runChatTurn<TCtx extends BaseToolContext>(
@@ -256,7 +273,10 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
 
     // ── 4. Reserve assistant turn row ───────────────────────────────
     const startedAt = clock.now()
-    const turnId = makeTurnId(startedAt, args.ctx.requestId)
+    // Host-supplied turnId wins when present so the port impl can
+    // address rows it pre-created (typical pattern: route inserts
+    // a row, takes its primary key, passes it here as a string).
+    const turnId = args.turnId ?? makeTurnId(startedAt, args.ctx.requestId)
     await args.ports.turnStore.upsert({
         id: turnId,
         threadId: args.threadId,
