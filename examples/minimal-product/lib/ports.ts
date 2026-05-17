@@ -3,6 +3,8 @@ import {
     type MemoryRecord,
     type MemoryScope,
     type MemoryStore,
+    type ModelKeyProvider,
+    type ModelProvider,
     NoopTelemetrySink,
     type QuotaState,
     type QuotaStore,
@@ -118,8 +120,28 @@ function sameScope(a: MemoryScope, b: MemoryScope): boolean {
     )
 }
 
+/**
+ * Pulls Anthropic + OpenAI keys from `process.env`. Real products
+ * read from their env / secret manager / per-tenant BYO-key table —
+ * `tenantId` is intentionally unused here because this example uses
+ * platform-wide keys.
+ */
+class EnvModelKeyProvider implements ModelKeyProvider {
+    async getKey(provider: ModelProvider): Promise<string> {
+        const envVar = provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'
+        const key = process.env[envVar]
+        if (!key) {
+            throw new Error(
+                `${envVar} is not configured. Copy .env.example to .env and add a key.`
+            )
+        }
+        return key
+    }
+}
+
 export const exampleTurnStore = new InMemoryTurnStore()
 export const exampleAuditStore = new InMemoryAuditStore()
 export const exampleMemoryStore = new InMemoryMemoryStore()
 export const exampleQuotaStore = new UnlimitedQuotaStore()
+export const exampleKeyProvider = new EnvModelKeyProvider()
 export const exampleTelemetry: TelemetrySink = new NoopTelemetrySink()
