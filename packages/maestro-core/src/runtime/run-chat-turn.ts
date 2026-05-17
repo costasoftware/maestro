@@ -1,5 +1,5 @@
 import { createAnthropic } from '@ai-sdk/anthropic'
-import { convertToModelMessages, streamText, type UIMessage } from 'ai'
+import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from 'ai'
 
 import { buildAiSdkTools } from '../adapters/ai-sdk.js'
 import { applyCacheBreakpoints } from '../cache-control.js'
@@ -132,6 +132,15 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext> {
      * kernel-generated ids unchanged.
      */
     turnId?: string
+    /**
+     * Max steps in the tool-use loop. Default `5` — leaves headroom for
+     * a few tool round-trips per turn without runaway loops. AI SDK
+     * counts each model response as a step; without this hint, the
+     * SDK stops after the FIRST response, meaning tool results never
+     * feed back to the model (the user sees the empty bubble after a
+     * tool call). Set higher for agents that do deep multi-step work.
+     */
+    maxSteps?: number
 }
 
 export async function runChatTurn<TCtx extends BaseToolContext>(
@@ -290,16 +299,28 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
     })
 
     // ── 5. Stream ───────────────────────────────────────────────────
-    // Pass cached.system as the first messages so the Anthropic prompt
-    // cache picks up the static segment + tool schema on hot turns.
-    // streamText accepts both top-level `system` and inline system
-    // messages in `messages[]`; using inline lets us carry the
-    // cacheControl providerOptions through unchanged.
+    // System messages MUST be passed via the top-level `system`
+    // parameter (not mixed into `messages`). Anthropic's tool-use API
+    // only enables tool_use blocks when system is supplied at the
+    // top level; messages-mixed system trips a different code path
+    // in @ai-sdk/anthropic and the model falls back to emitting
+    // <function_calls> XML in prose instead of structured tool calls.
+    // Confirmed bug in 0.2.2 — symptom: tool names visible as plain
+    // text in the chat, tools never execute. Cache breakpoint markers
+    // on the system entries carry through unchanged.
     const userMessages = await convertToModelMessages(args.messages)
     const stream = streamText({
         model,
-        messages: [...cached.system, ...userMessages],
+        system: cached.system,
+        messages: userMessages,
         tools: cached.tools,
+        // Without `stopWhen`, AI SDK defaults to `stepCountIs(1)` —
+        // the SDK stops after the FIRST model response, so even if
+        // the model emits real tool-use blocks, the follow-up step
+        // that re-prompts with tool results never runs. The user
+        // sees the assistant bubble end immediately after the tool
+        // call with no answer.
+        stopWhen: stepCountIs(args.maxSteps ?? 5),
         abortSignal: args.abortSignal,
         onFinish: async (event) => {
             const finishedAt = clock.now()
