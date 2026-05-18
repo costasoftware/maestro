@@ -101,6 +101,104 @@ export async function POST(req: Request) {
 }
 ```
 
+## Anthropic tool-calling traps
+
+When Anthropic Claude outputs raw `<function_calls><invoke name="...">` XML in its prose response instead of structured tool-use blocks, the model has fallen back to its pre-tool-use training format because something upstream prevented the request from engaging Anthropic's tool-use API path. There are four independent failure modes that all surface as the same symptom. Each one is individually invisible to type checks. All four must be right before shipping.
+
+### Trap 1 — `system` mixed into `messages`
+
+**Symptom:** model emits `<function_calls>` XML in prose; tool blocks never execute.
+
+**Cause:** `@ai-sdk/anthropic` only routes through Anthropic's tool-use API when the system prompt is supplied via the top-level `system:` argument. Pre-pending system entries onto the `messages` array trips a different code path that silently disables tool-use.
+
+**Fix:**
+
+```ts
+// WRONG — model outputs <function_calls> in prose
+streamText({
+    messages: [...systemMessages, ...userMessages],
+    tools,
+})
+
+// RIGHT — tool-use protocol engages
+streamText({
+    system: systemMessages,
+    messages: userMessages,
+    tools,
+})
+```
+
+Cache-control `providerOptions` markers on system entries are preserved either way; only the routing changes.
+
+### Trap 2 — `stopWhen` left at the default
+
+**Symptom:** the assistant bubble ends immediately after a tool call with no answer rendered. Tool blocks do execute, but the user never sees the follow-up text.
+
+**Cause:** without `stopWhen`, the AI SDK defaults to `stepCountIs(1)` — the SDK stops after the first model response. The follow-up step that re-prompts with tool results never runs.
+
+**Fix:**
+
+```ts
+import { streamText, stepCountIs } from 'ai'
+
+streamText({
+    system,
+    messages,
+    tools,
+    stopWhen: stepCountIs(5),
+})
+```
+
+A value of `5` is safe for most agents. Tune up for chains that legitimately need more than one tool round-trip.
+
+### Trap 3 — model narrates calls anyway
+
+**Symptom:** structured `tool_use` blocks execute correctly AND the model also emits the XML inline in its text output. The user sees both the real answer and the leaked markup.
+
+**Cause:** Anthropic models are trained on both the legacy `<function_calls>` format and the new structured format. Even when tools fire correctly, the model sometimes echoes the call in prose. Short system prompts re-surface this bias; long prompts often suppress it accidentally.
+
+**Fix:** add an explicit anti-narration rule to the system prompt. `maestro-core/runtime` exports this as a constant and a function helper:
+
+```ts
+import { runChatTurn, antiToolNarrationRule } from 'maestro-core/runtime'
+
+await runChatTurn({
+    // ...
+    systemPrompt: {
+        static: `${persona}\n\n${antiToolNarrationRule()}\n\n${corpus}`,
+    },
+})
+```
+
+`ANTI_TOOL_NARRATION_RULE` is also exported as a bare constant for inline template-literal use.
+
+### Trap 4 — tool registry resolves empty
+
+**Symptom:** `<function_calls>` XML in prose alongside placeholder text like `[waiting for system response]`. Latency and token counts look normal, the turn row persists, but no tool ever ran.
+
+**Cause:** the host's tool filter — surface/transport mapping, `isAvailable` predicates, or a role gate — returned no tools. The AI SDK then sends `tools: {}` to Anthropic. With nothing to call, the model falls back to narrating from its pre-tool-use training corpus.
+
+A common variant: passing a `HelpSurface`-style audience value (`'admin' | 'customer' | ...`) where a `ToolTransport` is expected (`'chat' | 'guest-chat' | 'whatsapp' | 'mcp'`). No tool advertises `'admin'` in its `transports` array, so the filter returns empty. The bug is hidden if the call site uses `transport: surface as never`.
+
+**Fix:** translate audience to transport explicitly, never cast:
+
+```ts
+const transport: ToolTransport =
+    surface === 'admin' || surface === 'customer' ? 'chat' : 'guest-chat'
+```
+
+**Smoking-gun signal:** on the first turn of a fresh session, `cache_write_tokens: 0` AND `cache_read_tokens: 0` means the tool block was never submitted to Anthropic (a populated tool registry writes the cache on cold and reads it on hot, given the ephemeral `cacheControl` markers `runChatTurn` sets). Combined with `<function_calls>` XML in the answer prose, that is empty-registry.
+
+### Smoke-test checklist
+
+For any prompt that should invoke at least one tool, assert all of the following — each guards a different trap and none is covered by type checks:
+
+- `event.toolCalls?.length > 0` — guards Trap 4 (empty registry) and Trap 1 (no tool-use routing).
+- final text contains no `<function_calls>` substring — guards Trap 3 (narration leak).
+- final text contains no `<invoke>` substring — same guard, complementary token.
+- final text is non-empty after a tool call — guards Trap 2 (`stopWhen` default).
+- on a cold first turn, telemetry shows `cache_write_tokens > 0` — guards Trap 4 (registry actually shipped).
+
 ## Provider fallback
 
 `shouldFallback` + `mapModelIdToOpenAI` give you composable retry against OpenAI when Anthropic hits a transient failure:
