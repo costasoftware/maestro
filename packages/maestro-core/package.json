@@ -1,5 +1,5 @@
 {
-    "name": "@maestro/core",
+    "name": "@costasoftware/maestro-core",
     "version": "1.0.0",
     "description": "Runtime kernel for the Maestro agent platform — tool envelope, tool definition factory, base context, port interfaces, and AI-SDK + MCP adapters.",
     "license": "Apache-2.0",

@@ -1,6 +1,6 @@
 # minimal-product
 
-Smallest possible Next.js 15 host that consumes [`@maestro/core`](https://www.npmjs.com/package/@maestro/core). Doubles as:
+Smallest possible Next.js 15 host that consumes [`@costasoftware/maestro-core`](https://www.npmjs.com/package/@costasoftware/maestro-core). Doubles as:
 
 - **Onboarding template** — copy this and replace tools / ports with your own
 - **Integration test surface** — when kernel ergonomics break in real-host context, they break here first
@@ -16,7 +16,7 @@ cp .env.example .env
 
 # from the monorepo root
 pnpm install
-pnpm --filter @maestro/example-minimal-product dev
+pnpm --filter @costasoftware/maestro-example-minimal-product dev
 ```
 
 Open another terminal:
@@ -44,11 +44,11 @@ You should see the assistant call the `addNumbers` tool and stream the answer.
 
 ## What's NOT wired
 
-- **No `runChatTurn`** — that's `@maestro/core@0.2.0` (P4). For now, the route hand-wires `streamText`.
+- **No `runChatTurn`** — that's `@costasoftware/maestro-core@0.2.0` (P4). For now, the route hand-wires `streamText`.
 - **No persistent storage** — ports are in-process Maps. Replace with Prisma / Postgres / Redis in your real product.
 - **No quota enforcement** — `UnlimitedQuotaStore` accepts everything.
 - **No prompt caching** — see `applyCacheBreakpoints` for the helper; not needed in a 3-tool demo.
-- **No MCP server** — see `@maestro/core/adapters/mcp-server` for the parallel adapter.
+- **No MCP server** — see `@costasoftware/maestro-core/adapters/mcp-server` for the parallel adapter.
 - **No auth** — `principal` is hard-coded `demo-user`.
 
 ## License

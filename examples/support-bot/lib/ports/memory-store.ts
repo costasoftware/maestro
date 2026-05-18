@@ -1,4 +1,4 @@
-import type { MemoryRecord, MemoryScope, MemoryStore } from '@maestro/core'
+import type { MemoryRecord, MemoryScope, MemoryStore } from '@costasoftware/maestro-core'
 
 /**
  * Process-local memory store. Keyed by record id; lookups filter by

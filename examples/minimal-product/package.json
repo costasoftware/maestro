@@ -1,8 +1,8 @@
 {
-    "name": "@maestro/example-minimal-product",
+    "name": "@costasoftware/maestro-example-minimal-product",
     "version": "0.0.0",
     "private": true,
-    "description": "Minimal Next.js host consuming @maestro/core. Onboarding template + integration-test surface.",
+    "description": "Minimal Next.js host consuming @costasoftware/maestro-core. Onboarding template + integration-test surface.",
     "type": "module",
     "scripts": {
         "dev": "next dev",
@@ -15,7 +15,7 @@
     "dependencies": {
         "@ai-sdk/anthropic": "^3.0.71",
         "ai": "^6.0.168",
-        "@maestro/core": "workspace:*",
+        "@costasoftware/maestro-core": "workspace:*",
         "next": "^15.5.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",

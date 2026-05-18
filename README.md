@@ -6,9 +6,9 @@ In-process tool-calling agent runtime for SaaS products. Powers user-support cha
 
 | Package | Status | npm |
 | --- | --- | --- |
-| [`@maestro/core`](./packages/maestro-core) | `1.0.0` released | [npmjs.com/package/@maestro/core](https://www.npmjs.com/package/@maestro/core) |
-| [`@maestro/evals`](./packages/maestro-evals) | `1.0.0` released | [npmjs.com/package/@maestro/evals](https://www.npmjs.com/package/@maestro/evals) |
-| `@maestro/react` | in progress (PR #12) | — |
+| [`@costasoftware/maestro-core`](./packages/maestro-core) | `1.0.0` released | [npmjs.com/package/@costasoftware/maestro-core](https://www.npmjs.com/package/@costasoftware/maestro-core) |
+| [`@costasoftware/maestro-evals`](./packages/maestro-evals) | `1.0.0` released | [npmjs.com/package/@costasoftware/maestro-evals](https://www.npmjs.com/package/@costasoftware/maestro-evals) |
+| `@costasoftware/maestro-react` | in progress (PR #12) | — |
 | `maestro-eval` | placeholder reserved | — |
 | `maestro-mcp` | placeholder reserved | — |
 | `maestro-telemetry` | placeholder reserved | — |
@@ -16,7 +16,7 @@ In-process tool-calling agent runtime for SaaS products. Powers user-support cha
 
 ## Status
 
-`1.x` — the `@maestro/*` family is live. Older unscoped names (`maestro-core`, `maestro-evals`) are deprecated; pin the scoped names. SemVer applies from `1.0.0` onward.
+`1.x` — the `@costasoftware/*` family is live. Older unscoped names (`maestro-core`, `maestro-evals`) are deprecated; pin the scoped names. SemVer applies from `1.0.0` onward.
 
 ## Quickstart
 

@@ -1,5 +1,5 @@
 {
-    "name": "@maestro/example-support-bot",
+    "name": "@costasoftware/maestro-example-support-bot",
     "version": "0.0.0",
     "private": true,
     "description": "Second example product — multi-tenant customer-support bot validating kernel generality. Different transports, tenant model, ports, and domain from minimal-product.",
@@ -16,7 +16,7 @@
         "@ai-sdk/anthropic": "^3.0.71",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "ai": "^6.0.168",
-        "@maestro/core": "workspace:*",
+        "@costasoftware/maestro-core": "workspace:*",
         "next": "^15.5.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",

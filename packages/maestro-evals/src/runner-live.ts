@@ -1,8 +1,8 @@
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { stepCountIs, streamText, tool, type ToolSet } from 'ai'
-import { applyCacheBreakpoints } from '@maestro/core'
-import { ANTI_TOOL_NARRATION_RULE } from '@maestro/core/runtime'
-import type { AnyAgentToolDefinition, BaseToolContext } from '@maestro/core'
+import { applyCacheBreakpoints } from '@costasoftware/maestro-core'
+import { ANTI_TOOL_NARRATION_RULE } from '@costasoftware/maestro-core/runtime'
+import type { AnyAgentToolDefinition, BaseToolContext } from '@costasoftware/maestro-core'
 
 import {
     assertNoForbiddenPhrases,
@@ -256,7 +256,7 @@ async function runSingleLive<TCtx extends BaseToolContext<string>>(
 
 /**
  * Build an AI-SDK-shaped tool registry from a fixture's tools. We
- * don't reuse @maestro/core's `buildAiSdkTools` because that helper
+ * don't reuse @costasoftware/maestro-core's `buildAiSdkTools` because that helper
  * pulls in the audit / clock / exception ports that have no place
  * in an eval. Each tool's `execute` is invoked with a synthetic
  * context that satisfies the BaseToolContext interface so the body

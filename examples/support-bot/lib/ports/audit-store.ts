@@ -1,4 +1,4 @@
-import type { AuditStore, ToolCallAudit } from '@maestro/core'
+import type { AuditStore, ToolCallAudit } from '@costasoftware/maestro-core'
 
 /**
  * Console-backed audit store — every tool call is logged as a single

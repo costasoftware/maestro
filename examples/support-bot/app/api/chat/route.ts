@@ -3,7 +3,7 @@ import {
     createUIMessageStreamResponse,
     type UIMessage,
 } from 'ai'
-import { AiQuotaDeniedError, antiToolNarrationRule, runChatTurn } from '@maestro/core/runtime'
+import { AiQuotaDeniedError, antiToolNarrationRule, runChatTurn } from '@costasoftware/maestro-core/runtime'
 
 import { buildCtxFromHeaders } from '@/lib/auth'
 import type { SupportBotCtx } from '@/lib/context'

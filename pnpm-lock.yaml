@@ -20,7 +20,7 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
         version: 3.0.78(zod@3.25.76)
-      '@maestro/core':
+      '@costasoftware/maestro-core':
         specifier: workspace:*
         version: link:../../packages/maestro-core
       ai:
@@ -57,7 +57,7 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
         version: 3.0.78(zod@3.25.76)
-      '@maestro/core':
+      '@costasoftware/maestro-core':
         specifier: workspace:*
         version: link:../../packages/maestro-core
       '@modelcontextprotocol/sdk':
@@ -125,7 +125,7 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
         version: 3.0.78(zod@3.25.76)
-      '@maestro/core':
+      '@costasoftware/maestro-core':
         specifier: workspace:*
         version: link:../maestro-core
       '@types/node':
