@@ -146,7 +146,26 @@ importers:
 
   packages/maestro-mcp: {}
 
-  packages/maestro-react: {}
+  packages/maestro-react:
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.2.14)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.6(react@19.2.6)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)
 
   packages/maestro-telemetry: {}
 
