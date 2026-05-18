@@ -34,6 +34,10 @@
         "./protocol": {
             "types": "./dist/protocol.d.ts",
             "import": "./dist/protocol.js"
+        },
+        "./transports": {
+            "types": "./dist/transports/index.d.ts",
+            "import": "./dist/transports/index.js"
         }
     },
     "files": [
@@ -44,15 +48,19 @@
         "build": "tsc -p tsconfig.build.json",
         "test": "vitest run",
         "lint": "echo \"(lint not yet configured)\" && exit 0",
-        "typecheck": "tsc -p tsconfig.build.json --noEmit",
+        "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.test.json",
         "clean": "rm -rf dist .turbo *.tsbuildinfo",
         "prepublishOnly": "rm -rf dist .turbo *.tsbuildinfo && tsc -p tsconfig.build.json"
     },
     "peerDependencies": {
+        "ai": "^6.0.0",
         "react": ">=18",
         "react-dom": ">=18"
     },
     "peerDependenciesMeta": {
+        "ai": {
+            "optional": true
+        },
         "react": {
             "optional": true
         },
@@ -61,8 +69,12 @@
         }
     },
     "devDependencies": {
+        "@testing-library/dom": "^10.0.0",
+        "@testing-library/react": "^16.0.0",
+        "@types/node": "^20.0.0",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
+        "jsdom": "^25.0.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "typescript": "^5.7.2",
