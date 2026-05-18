@@ -24,7 +24,7 @@ import type { AgentToolDefinition } from '../tool.js'
  *     expects the handler to resolve with an error result, not
  *     throw — different contract from AI SDK).
  */
-export interface RegisterMcpToolsArgs<TCtx extends BaseToolContext> {
+export interface RegisterMcpToolsArgs<TCtx extends BaseToolContext<string>> {
     server: McpServer
     /**
      * Registry already filtered for the surface. Typed with `any` slots so
@@ -41,7 +41,7 @@ export interface RegisterMcpToolsArgs<TCtx extends BaseToolContext> {
     onError?: (error: unknown, tags: Record<string, unknown>) => void
 }
 
-export function registerMcpTools<TCtx extends BaseToolContext>(
+export function registerMcpTools<TCtx extends BaseToolContext<string>>(
     args: RegisterMcpToolsArgs<TCtx>
 ): void {
     const clock = args.clock ?? new SystemClock()

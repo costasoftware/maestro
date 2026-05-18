@@ -31,7 +31,7 @@ import type { AgentToolDefinition } from '../tool.js'
  * reuse depends on the tool registry bytes being identical across
  * tenants — keep tool descriptions tenant-invariant.
  */
-export interface BuildAiSdkToolsArgs<TCtx extends BaseToolContext> {
+export interface BuildAiSdkToolsArgs<TCtx extends BaseToolContext<string>> {
     /**
      * Registry already filtered for the active surface + actor + isAvailable.
      * Typed as `AgentToolDefinition<any, any, TCtx>` (not `AnyAgentToolDefinition`)
@@ -49,7 +49,7 @@ export interface BuildAiSdkToolsArgs<TCtx extends BaseToolContext> {
     clock?: Clock
 }
 
-export function buildAiSdkTools<TCtx extends BaseToolContext>(
+export function buildAiSdkTools<TCtx extends BaseToolContext<string>>(
     args: BuildAiSdkToolsArgs<TCtx>
 ): ToolSet {
     const clock = args.clock ?? new SystemClock()
@@ -130,7 +130,7 @@ export function buildAiSdkTools<TCtx extends BaseToolContext>(
  * RAG corpus) should call `buildAiSdkTools` + `applyCacheBreakpoints`
  * separately.
  */
-export function buildCachedAiSdkSetup<TCtx extends BaseToolContext>(args: {
+export function buildCachedAiSdkSetup<TCtx extends BaseToolContext<string>>(args: {
     build: BuildAiSdkToolsArgs<TCtx>
     cache: Omit<CacheableBlock<ToolSet>, 'static'> & {
         static: Omit<CacheableBlock<ToolSet>['static'], 'tools'>

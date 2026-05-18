@@ -27,7 +27,7 @@ export type ToolCostBand = 'cheap' | 'medium' | 'expensive'
 export interface AgentToolDefinition<
     TInput extends z.ZodTypeAny,
     TOutput,
-    TCtx extends BaseToolContext = BaseToolContext,
+    TCtx extends BaseToolContext<string> = BaseToolContext,
 > {
     /** Public identifier the model sees. camelCase by convention. */
     name: string
@@ -43,10 +43,16 @@ export interface AgentToolDefinition<
 
     /**
      * Surfaces where this tool is offered. Adapters filter the registry
-     * via `def.transports.includes(transport)`. String values are the
-     * host's vocabulary — kernel does not enumerate.
+     * via `def.transports.includes(transport)`. Element type is
+     * `TCtx['transport']`, so when the host narrows its ctx transport
+     * union, a tool with a stale or unknown transport literal
+     * (`['admin']` vs `'chat' | 'mcp'`) fails to compile — closing the
+     * surface-vs-transport trap that previously required an explicit
+     * `as never` cast at the kernel boundary to silence. Hosts that
+     * leave `TCtx['transport']` as the default `string` keep the
+     * pre-existing free-form behaviour.
      */
-    transports: readonly string[]
+    transports: readonly TCtx['transport'][]
 
     /**
      * Per-request gate. Runs BEFORE the tool is offered to the model.
@@ -105,7 +111,7 @@ export interface AgentToolDefinition<
 export function defineAgentTool<
     TInput extends z.ZodTypeAny,
     TOutput,
-    TCtx extends BaseToolContext = BaseToolContext,
+    TCtx extends BaseToolContext<string> = BaseToolContext,
 >(
     def: AgentToolDefinition<TInput, TOutput, TCtx>
 ): AgentToolDefinition<TInput, TOutput, TCtx> {
@@ -113,5 +119,5 @@ export function defineAgentTool<
 }
 
 /** Convenient existential for registries that hold mixed tools. */
-export type AnyAgentToolDefinition<TCtx extends BaseToolContext = BaseToolContext> =
+export type AnyAgentToolDefinition<TCtx extends BaseToolContext<string> = BaseToolContext> =
     AgentToolDefinition<z.ZodTypeAny, unknown, TCtx>
