@@ -65,7 +65,7 @@ export interface RunChatTurnPorts {
     logger?: Logger
 }
 
-export interface RunChatTurnArgs<TCtx extends BaseToolContext> {
+export interface RunChatTurnArgs<TCtx extends BaseToolContext<string>> {
     /** Stable id grouping this turn into a conversation. */
     threadId: string
     /** Per-request context. */
@@ -170,7 +170,7 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext> {
     emptyRecoveryFallback?: string
 }
 
-export async function runChatTurn<TCtx extends BaseToolContext>(
+export async function runChatTurn<TCtx extends BaseToolContext<string>>(
     args: RunChatTurnArgs<TCtx>
 ): Promise<Response> {
     const clock = args.ports.clock ?? new SystemClock()

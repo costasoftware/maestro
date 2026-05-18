@@ -5,24 +5,39 @@
  *
  * The base shape is intentionally minimal — everything that is universal
  * to any tool-calling agent system. Hosts extend via intersection at the
- * `defineAgentTool<TInput, TOutput, TCtx>` call site:
+ * `defineAgentTool<TInput, TOutput, TCtx>` call site, and narrow
+ * `transport` to a host-owned union so the kernel can type-check tool
+ * `transports: [...]` literals against the live surface set:
  *
  * ```ts
- * type BarbeiroCtx = BaseToolContext & {
+ * type BarbeiroTransport = 'chat' | 'guest-chat' | 'whatsapp' | 'mcp'
+ *
+ * interface BarbeiroCtx extends BaseToolContext<BarbeiroTransport> {
  *   businessSlug?: string
  *   guestPhone?: string
  *   role: HelpRole | null
  * }
  *
- * defineAgentTool<Input, Output, BarbeiroCtx>({ ... })
+ * defineAgentTool<Input, Output, BarbeiroCtx>({
+ *     transports: ['chat'],          // ✓ compiles
+ *     // transports: ['admin'],      // ✗ TS error: not in BarbeiroTransport
+ *     // ...
+ * })
  * ```
+ *
+ * The `TTransport` generic defaults to `string`, so hosts that don't
+ * yet opt in continue to compile unchanged. Narrowing is a one-line
+ * change on the host's context interface; once applied, mismatched
+ * `transports` literals AND a wrong ctx assignment (`transport: 'admin'`
+ * when only `'chat' | 'mcp'` is allowed) both become compile-time
+ * errors — no `as never` rescue remains.
  *
  * Per-tool generic param (not TS module augmentation) is the chosen
  * extension mechanism — keeps the augmentation scoped to one tool
  * instead of polluting a shared global interface, so siblings in a
  * future monorepo can't trip over each other's context shapes.
  */
-export interface BaseToolContext {
+export interface BaseToolContext<TTransport extends string = string> {
     /**
      * Opaque tenant scope. The host product owns the meaning
      * (`businessId.toString()`, workspace UUID, org slug, etc.) — kernel
@@ -48,10 +63,13 @@ export interface BaseToolContext {
     /**
      * Which surface invoked the call (`'chat'`, `'guest-chat'`,
      * `'whatsapp'`, `'mcp'`, ...). Adapters filter the registry by
-     * `def.transports.includes(transport)`. String-typed; the host owns
-     * the vocabulary.
+     * `def.transports.includes(transport)`. Defaults to `string` so
+     * pre-existing hosts compile unchanged; narrow via the `TTransport`
+     * generic to make `transports: [...]` literals on tool definitions
+     * (and ctx-construction call sites) compile-checked against the
+     * host's surface vocabulary.
      */
-    transport: string
+    transport: TTransport
 
     /** IETF BCP-47 locale tag, e.g. `'pt-BR'`. */
     locale: string
