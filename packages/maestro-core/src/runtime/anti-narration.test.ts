@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest'
 
-import { ANTI_TOOL_NARRATION_RULE } from './anti-narration.js'
+import {
+    ANTI_TOOL_NARRATION_RULE,
+    antiToolNarrationRule,
+} from './anti-narration.js'
+
+describe('antiToolNarrationRule()', () => {
+    it('returns the same string the constant exposes', () => {
+        expect(antiToolNarrationRule()).toBe(ANTI_TOOL_NARRATION_RULE)
+    })
+
+    it('returns a string (function form, not auto-invoked)', () => {
+        expect(typeof antiToolNarrationRule).toBe('function')
+        expect(typeof antiToolNarrationRule()).toBe('string')
+    })
+})
 
 describe('ANTI_TOOL_NARRATION_RULE', () => {
     it('explicitly forbids the XML tokens that models leak', () => {

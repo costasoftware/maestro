@@ -1,4 +1,4 @@
-export { ANTI_TOOL_NARRATION_RULE } from './anti-narration.js'
+export { ANTI_TOOL_NARRATION_RULE, antiToolNarrationRule } from './anti-narration.js'
 export {
     decideEmptyRecovery,
     type DecideEmptyRecoveryArgs,
