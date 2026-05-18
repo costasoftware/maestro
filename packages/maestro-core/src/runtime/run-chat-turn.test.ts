@@ -218,4 +218,58 @@ describe('runChatTurn → streamText handoff (regression guard)', () => {
             expect.objectContaining({ apiKey: 'test-anthropic-key' })
         )
     })
+
+    it('logs a warn when the tool registry is empty (likely host filter dropped everything)', async () => {
+        // The surface-vs-transport trap (barbeiro PR #377) collapsed
+        // the entire eligibility list to zero tools. Anthropic with
+        // `tools: {}` falls back to emitting <function_calls> XML in
+        // prose from its pre-tool-use training corpus. The symptom
+        // only surfaces in the user's chat bubble — never in stack
+        // traces. A kernel-side warn at least puts the signal in
+        // operator logs so the failure mode has a foothold besides
+        // the user complaint.
+        const warn = vi.fn()
+        const logger = {
+            debug: vi.fn(),
+            info: vi.fn(),
+            warn,
+            error: vi.fn(),
+        }
+        await runChatTurn(
+            makeArgs({
+                tools: [],
+                ports: { ...makePorts(), clock: new FixedClock(FIXED), logger },
+            })
+        )
+
+        const emptyWarns = warn.mock.calls.filter(([msg]) =>
+            typeof msg === 'string' && msg.includes('empty tool registry')
+        )
+        expect(emptyWarns.length).toBe(1)
+        expect(emptyWarns[0]?.[1]).toMatchObject({
+            tenantId: '42',
+            transport: 'chat',
+            actor: 'human',
+        })
+    })
+
+    it('does NOT log the empty-registry warn when tools are present', async () => {
+        const warn = vi.fn()
+        const logger = {
+            debug: vi.fn(),
+            info: vi.fn(),
+            warn,
+            error: vi.fn(),
+        }
+        await runChatTurn(
+            makeArgs({
+                ports: { ...makePorts(), clock: new FixedClock(FIXED), logger },
+            })
+        )
+
+        const emptyWarns = warn.mock.calls.filter(([msg]) =>
+            typeof msg === 'string' && msg.includes('empty tool registry')
+        )
+        expect(emptyWarns.length).toBe(0)
+    })
 })

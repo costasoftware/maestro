@@ -212,6 +212,25 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
     const model = anthropic(selection.modelId)
 
     // ── 3. Tools (adapter handles per-call audit) ───────────────────
+    // Empty registry is a smell, not an error. Some chat surfaces
+    // legitimately ship without tools (pure-Q&A). But far more often,
+    // an empty registry means the host's eligibility filter (transport
+    // mismatch, scope predicate, kill switch) dropped everything — and
+    // Anthropic with `tools: {}` falls back to emitting `<function_calls>`
+    // XML in prose from its pre-tool-use training corpus. Warn so the
+    // operator notices in logs even when the symptom only shows in the
+    // user's chat bubble. See ai_sdk_tools_function_calls_xml_in_prose
+    // trap catalog for the full surface-vs-transport story.
+    if (args.tools.length === 0) {
+        logger.warn(
+            'runChatTurn received empty tool registry — Anthropic will receive tools:{} and likely emit <function_calls> XML in prose. Check your eligibility filter (transport/actor/isAvailable) if this is unexpected.',
+            {
+                tenantId: args.ctx.tenantId,
+                transport: args.ctx.transport,
+                actor: args.ctx.actor,
+            }
+        )
+    }
     const rawTools = buildAiSdkTools<TCtx>({
         registry: args.tools,
         ctx: args.ctx,
