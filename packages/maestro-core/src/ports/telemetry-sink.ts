@@ -69,10 +69,12 @@ export type TelemetryEvent =
            * The not-triggered path is intentionally NOT emitted — operators
            * dashboard stalled rates, not the steady-state pass.
            *
-           * Note: this event reports the classifier outcome only.
-           * Mid-stream synthesis injection is a future kernel feature;
-           * `streamText` does not currently expose a writer the kernel
-           * can splice into.
+           * When `decision.mode === 'enforce'` AND the host supplied a
+           * `writer` arg to `runChatTurn`, the kernel performs mid-stream
+           * synthesis injection (second `streamText` call merged into
+           * the same UI stream). When `enforce` is requested but no
+           * writer is supplied, the kernel additionally emits
+           * `turn.empty_recovery_skipped` to flag the degraded path.
            *
            * The `decision` field carries the full `EmptyRecoveryDecision`
            * struct returned by the `decideEmptyRecovery` helper. Inlined
@@ -89,6 +91,28 @@ export type TelemetryEvent =
               fallbackText: string | null
               persistedErrorCode: string | null
           }
+          occurredAt: Date
+      }
+    | {
+          /**
+           * Emitted by `runChatTurn` whenever empty-recovery `enforce`
+           * mode is requested AND triggers AND would have injected a
+           * synthesis stream, but the kernel could not actually perform
+           * the injection (no `writer` arg supplied, today the only
+           * documented reason). Sibling to `turn.empty_recovery` —
+           * surfaces the degraded path so operators can dashboard hosts
+           * that asked for enforce but never wired the writer.
+           *
+           * `reason` is open-ended so future skip causes (mid-stream
+           * abort, second-call provider error) can be reported with a
+           * stable enum without re-shaping the event.
+           */
+          type: 'turn.empty_recovery_skipped'
+          turnId: string
+          threadId: string
+          tenantId: string
+          reason: 'no_writer' | string
+          requestedMode: 'enforce'
           occurredAt: Date
       }
 

@@ -120,6 +120,7 @@ beforeEach(() => {
     streamTextMock.mockReset()
     streamTextMock.mockReturnValue({
         toUIMessageStreamResponse: () => new Response('mock stream'),
+        toUIMessageStream: () => ({ _mock: 'ui-message-stream' }),
     })
     convertToModelMessagesMock.mockClear()
     createAnthropicMock.mockClear()
@@ -489,5 +490,318 @@ describe('runChatTurn → empty-recovery wire-in', () => {
         expect(
             warnCalls.some(([msg]) => msg.includes('empty-recovery classifier triggered'))
         ).toBe(false)
+    })
+})
+
+/**
+ * Writer-arg regression suite (Part A of feat-runchatturn-writer-arg).
+ *
+ * When the host passes `writer`, runChatTurn merges streamText into it
+ * and returns `undefined` — the host owns the outer createUIMessageStream
+ * Response wrapper. When omitted, runChatTurn returns a Response as
+ * before (no behaviour change for existing callers).
+ */
+describe('runChatTurn → writer arg', () => {
+    it('returns a Response when no writer is supplied (backward-compat)', async () => {
+        const result = await runChatTurn(
+            makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
+        )
+
+        expect(result).toBeInstanceOf(Response)
+    })
+
+    it('merges streamText into the writer and returns undefined when writer is supplied', async () => {
+        const merge = vi.fn()
+        const write = vi.fn()
+        const writer = {
+            merge,
+            write,
+            onError: undefined,
+        }
+
+        const result = await runChatTurn(
+            makeArgs({
+                writer: writer as unknown as Parameters<typeof runChatTurn>[0]['writer'],
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+
+        // No standalone Response — host owns the response envelope.
+        expect(result).toBeUndefined()
+        // The streamText result's toUIMessageStream() output was merged
+        // into the writer exactly once.
+        expect(merge).toHaveBeenCalledTimes(1)
+        expect(merge).toHaveBeenCalledWith({ _mock: 'ui-message-stream' })
+    })
+
+    it('does NOT call toUIMessageStreamResponse when writer is supplied', async () => {
+        const toUIMessageStreamResponse = vi.fn(() => new Response('should-not-fire'))
+        streamTextMock.mockReturnValueOnce({
+            toUIMessageStreamResponse,
+            toUIMessageStream: () => ({ _mock: 'ui-message-stream' }),
+        })
+
+        const writer = {
+            merge: vi.fn(),
+            write: vi.fn(),
+            onError: undefined,
+        }
+
+        await runChatTurn(
+            makeArgs({
+                writer: writer as unknown as Parameters<typeof runChatTurn>[0]['writer'],
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+
+        expect(toUIMessageStreamResponse).not.toHaveBeenCalled()
+    })
+})
+
+/**
+ * Enforce-mode synthesis injection regression suite (Part B).
+ *
+ * When `emptyRecoveryMode: 'enforce'` AND the classifier triggers
+ * (empty text + tool calls) AND the host supplied a writer, the kernel
+ * MUST fire a second `streamText` call merged into the same writer.
+ * When the writer is missing, the kernel logs warn + emits
+ * `turn.empty_recovery_skipped` and skips the second call.
+ *
+ * Cost: the second call's tokens land on the persisted TurnRecord via
+ * a follow-up upsert from the synthesis stream's own onFinish.
+ */
+describe('runChatTurn → enforce-mode synthesis injection', () => {
+    function captureOnFinish(callIndex = -1): () => (event: unknown) => Promise<void> {
+        return () => {
+            const call = streamTextMock.mock.calls.at(callIndex)?.[0] as
+                | { onFinish?: (event: unknown) => Promise<void> }
+                | undefined
+            if (!call?.onFinish) {
+                throw new Error('onFinish was not passed to streamText')
+            }
+            return call.onFinish
+        }
+    }
+
+    function makeTelemetry(): { sink: TelemetrySink; events: TelemetryEvent[] } {
+        const events: TelemetryEvent[] = []
+        return {
+            events,
+            sink: {
+                emit: async (batch) => {
+                    events.push(...batch)
+                },
+            },
+        }
+    }
+
+    function makeWriter() {
+        const merge = vi.fn()
+        const write = vi.fn()
+        return {
+            merge,
+            write,
+            handle: {
+                merge,
+                write,
+                onError: undefined,
+            } as unknown as Parameters<typeof runChatTurn>[0]['writer'],
+        }
+    }
+
+    it('fires a SECOND streamText call when enforce + empty text + tools + writer supplied', async () => {
+        const writer = makeWriter()
+        const ports = makePorts()
+
+        await runChatTurn(
+            makeArgs({
+                emptyRecoveryMode: 'enforce',
+                emptyRecoveryFallback: 'Desculpe, tive um problema.',
+                writer: writer.handle,
+                ports: { ...ports, clock: new FixedClock(FIXED) },
+            })
+        )
+
+        // Pre-condition: the first streamText call happened.
+        expect(streamTextMock.mock.calls.length).toBe(1)
+
+        // Drive the first call's onFinish with the tool-loop-no-text shape.
+        const grab = captureOnFinish(0)
+        await grab()({
+            text: '',
+            toolCalls: [{ toolName: 'lookup' }],
+            usage: { inputTokens: 10, outputTokens: 0 },
+            response: {
+                messages: [
+                    { role: 'assistant', content: [{ type: 'tool-call', toolName: 'lookup' }] },
+                    { role: 'tool', content: [{ type: 'tool-result', toolName: 'lookup', output: { answered: true } }] },
+                ],
+            },
+        })
+
+        // The synthesis call fired — total streamText invocations = 2.
+        expect(streamTextMock.mock.calls.length).toBe(2)
+
+        const synthesisCall = streamTextMock.mock.calls[1]?.[0] as {
+            system?: unknown
+            tools?: unknown
+            toolChoice?: unknown
+            messages?: Array<{ role: string }>
+            stopWhen?: unknown
+            onFinish?: (event: unknown) => Promise<void>
+        }
+        // Cache constraint: same cached system + tools object identity
+        // as the first call (so Anthropic's prompt cache prefix hits).
+        const firstCall = streamTextMock.mock.calls[0]?.[0] as {
+            system?: unknown
+            tools?: unknown
+        }
+        expect(synthesisCall.system).toBe(firstCall.system)
+        expect(synthesisCall.tools).toBe(firstCall.tools)
+        // toolChoice 'none' + stopWhen set so the model returns text
+        // without re-calling tools.
+        expect(synthesisCall.toolChoice).toBe('none')
+        expect(synthesisCall.stopWhen).toBeDefined()
+        // Last message is the synthesis instruction (a user-shaped prompt).
+        const lastMsg = synthesisCall.messages?.at(-1)
+        expect(lastMsg?.role).toBe('user')
+
+        // The synthesis stream was merged into the writer.
+        expect(writer.merge).toHaveBeenCalled()
+
+        // Drive the synthesis onFinish so combined-totals upsert fires.
+        if (synthesisCall.onFinish) {
+            await synthesisCall.onFinish({
+                text: 'Found one result.',
+                usage: { inputTokens: 5, outputTokens: 8 },
+            })
+        }
+
+        // TurnStore.upsert fires the combined-totals row (status=completed,
+        // tokensIn = first + synth, tokensOut = first + synth).
+        const upsertCalls = (ports.turnStore.upsert as ReturnType<typeof vi.fn>).mock
+            .calls
+        const finalUpsert = upsertCalls.at(-1)?.[0] as
+            | {
+                  status?: string
+                  tokensIn?: number
+                  tokensOut?: number
+                  metadata?: Record<string, unknown>
+              }
+            | undefined
+        expect(finalUpsert?.status).toBe('completed')
+        expect(finalUpsert?.tokensIn).toBe(15)
+        expect(finalUpsert?.tokensOut).toBe(8)
+        expect(finalUpsert?.metadata).toMatchObject({
+            empty_recovery_code: 'tool_loop_no_text_recovered_fallback',
+            empty_recovery_synthesis_tokens_in: 5,
+            empty_recovery_synthesis_tokens_out: 8,
+        })
+    })
+
+    it('does NOT fire a second streamText call when enforce + no writer (degrades to log-only + skipped event)', async () => {
+        const { sink, events } = makeTelemetry()
+        const warnCalls: Array<[string, object | undefined]> = []
+        const logger: Logger = {
+            debug: () => {},
+            info: () => {},
+            warn: (msg, meta) => warnCalls.push([msg, meta]),
+            error: () => {},
+        }
+
+        await runChatTurn(
+            makeArgs({
+                emptyRecoveryMode: 'enforce',
+                emptyRecoveryFallback: 'Desculpe.',
+                // No writer — enforce should degrade.
+                ports: {
+                    ...makePorts(),
+                    clock: new FixedClock(FIXED),
+                    telemetry: sink,
+                    logger,
+                },
+            })
+        )
+
+        const grab = captureOnFinish(0)
+        await grab()({
+            text: '',
+            toolCalls: [{ toolName: 'lookup' }],
+            usage: { inputTokens: 10, outputTokens: 0 },
+            response: { messages: [] },
+        })
+
+        // No second streamText call — only the first one happened.
+        expect(streamTextMock.mock.calls.length).toBe(1)
+
+        // turn.empty_recovery_skipped emitted with reason=no_writer.
+        const skipped = events.filter((e) => e.type === 'turn.empty_recovery_skipped')
+        expect(skipped).toHaveLength(1)
+        const skipEvt = skipped[0] as Extract<
+            TelemetryEvent,
+            { type: 'turn.empty_recovery_skipped' }
+        >
+        expect(skipEvt.reason).toBe('no_writer')
+        expect(skipEvt.requestedMode).toBe('enforce')
+        expect(skipEvt.turnId).toBeDefined()
+        expect(skipEvt.threadId).toBe('thread_x')
+        expect(skipEvt.tenantId).toBe('42')
+
+        // Warn fired about the degraded path.
+        const degradeWarn = warnCalls.find(([msg]) =>
+            msg.includes('enforce requested but no writer was supplied')
+        )
+        expect(degradeWarn).toBeDefined()
+
+        // The classifier-triggered event still fires (log-only signal).
+        expect(events.some((e) => e.type === 'turn.empty_recovery')).toBe(true)
+    })
+
+    it('does NOT fire a second streamText call when enforce + writer but turn has text (classifier does not trigger)', async () => {
+        const writer = makeWriter()
+
+        await runChatTurn(
+            makeArgs({
+                emptyRecoveryMode: 'enforce',
+                emptyRecoveryFallback: 'fallback',
+                writer: writer.handle,
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+
+        const grab = captureOnFinish(0)
+        await grab()({
+            text: 'Here is the answer.',
+            toolCalls: [{ toolName: 'lookup' }],
+            usage: { inputTokens: 10, outputTokens: 20 },
+            response: { messages: [] },
+        })
+
+        // Only the first streamText call — classifier did not trigger
+        // because the text was non-empty.
+        expect(streamTextMock.mock.calls.length).toBe(1)
+    })
+
+    it('does NOT fire a second streamText call when log_only mode + writer + classifier triggers', async () => {
+        const writer = makeWriter()
+
+        await runChatTurn(
+            makeArgs({
+                emptyRecoveryMode: 'log_only',
+                writer: writer.handle,
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+
+        const grab = captureOnFinish(0)
+        await grab()({
+            text: '',
+            toolCalls: [{ toolName: 'lookup' }],
+            usage: { inputTokens: 10, outputTokens: 0 },
+            response: { messages: [] },
+        })
+
+        // log_only mode never injects — even with a writer present.
+        expect(streamTextMock.mock.calls.length).toBe(1)
     })
 })

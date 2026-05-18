@@ -1,4 +1,8 @@
-import type { UIMessage } from 'ai'
+import {
+    createUIMessageStream,
+    createUIMessageStreamResponse,
+    type UIMessage,
+} from 'ai'
 import { AiQuotaDeniedError, runChatTurn } from 'maestro-core/runtime'
 
 import type { ExampleCtx } from '@/lib/context'
@@ -13,22 +17,22 @@ import {
 import { allTools } from '@/lib/tools'
 
 /**
- * Minimal chat endpoint backed by `runChatTurn`.
+ * Minimal chat endpoint backed by `runChatTurn` — demonstrates the
+ * `writer` arg pattern.
  *
  * The host's job is to:
  *   1. Build a `BaseToolContext`-shaped per-request context.
  *   2. Filter the tool registry for the active surface (this example
  *      shows all tools; production hosts would call `isAvailable` /
  *      transport filters here).
- *   3. Pass it all to `runChatTurn`, which handles: pre-call quota
- *      gate, model selection via `selectChatModel`, provider key
- *      resolution via `ModelKeyProvider`, AI SDK tool building with
- *      audit-wrapping, prompt-cache breakpoints, memory injection,
- *      `streamText`, turn-row lifecycle, post-call accounting, and
- *      the SSE Response.
+ *   3. Wrap `runChatTurn` in `createUIMessageStream` so the host owns
+ *      the UI-message stream envelope and can emit data chips around
+ *      the kernel call (status pings, citations, etc.). The kernel
+ *      merges its `streamText` output into the supplied writer.
  *
  * Pre-runChatTurn this route was ~78 LoC of hand-wiring; with the
- * kernel call it's ~30 LoC of actual logic.
+ * kernel call + writer arg it's still ~40 LoC of actual logic, and
+ * the host now controls the pre/post-stream chip surface.
  */
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -53,30 +57,56 @@ export async function POST(req: Request) {
     }
 
     try {
-        return await runChatTurn<ExampleCtx>({
-            threadId: 'demo-thread',
-            ctx,
-            messages: body.messages,
-            tools: allTools,
-            systemPrompt: {
-                static:
-                    'You are a helpful assistant integrated with the Maestro agent runtime. ' +
-                    'Three tools are available: echo (capitalises input), addNumbers (adds two numbers), getTime (returns current time). ' +
-                    'Use them when the user asks for the corresponding action. Be concise.',
-            },
-            models: {
-                fast: 'claude-haiku-4-5-20251001',
-                smart: 'claude-sonnet-4-6',
-            },
-            ports: {
-                turnStore: exampleTurnStore,
-                keyProvider: exampleKeyProvider,
-                auditStore: exampleAuditStore,
-                memoryStore: exampleMemoryStore,
-                quotaStore: exampleQuotaStore,
-                telemetry: exampleTelemetry,
+        const stream = createUIMessageStream({
+            execute: async ({ writer }) => {
+                // Pre-stream chip: tell the client we're thinking
+                // before the model produces its first token. The host
+                // owns this surface — the kernel never writes data
+                // parts on its own.
+                writer.write({
+                    type: 'data-status',
+                    data: { phase: 'thinking', at: new Date().toISOString() },
+                })
+
+                // Kernel call: merges `streamText` into the writer
+                // instead of returning a standalone Response.
+                await runChatTurn<ExampleCtx>({
+                    threadId: 'demo-thread',
+                    ctx,
+                    messages: body.messages,
+                    tools: allTools,
+                    systemPrompt: {
+                        static:
+                            'You are a helpful assistant integrated with the Maestro agent runtime. ' +
+                            'Three tools are available: echo (capitalises input), addNumbers (adds two numbers), getTime (returns current time). ' +
+                            'Use them when the user asks for the corresponding action. Be concise.',
+                    },
+                    models: {
+                        fast: 'claude-haiku-4-5-20251001',
+                        smart: 'claude-sonnet-4-6',
+                    },
+                    // Enforce-mode synthesis injection: if the model
+                    // calls a tool and returns no text, the kernel
+                    // fires a second streamText call merged into this
+                    // same writer using the fallback below as the
+                    // synthesis instruction. Requires `writer` to be
+                    // set (which it is here).
+                    emptyRecoveryMode: 'enforce',
+                    emptyRecoveryFallback:
+                        'I had trouble summarising the tool output. Could you rephrase?',
+                    writer,
+                    ports: {
+                        turnStore: exampleTurnStore,
+                        keyProvider: exampleKeyProvider,
+                        auditStore: exampleAuditStore,
+                        memoryStore: exampleMemoryStore,
+                        quotaStore: exampleQuotaStore,
+                        telemetry: exampleTelemetry,
+                    },
+                })
             },
         })
+        return createUIMessageStreamResponse({ stream })
     } catch (e) {
         if (e instanceof AiQuotaDeniedError) {
             return Response.json(
