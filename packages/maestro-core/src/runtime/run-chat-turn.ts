@@ -16,6 +16,7 @@ import { NoopTelemetrySink, type TelemetrySink } from '../ports/telemetry-sink.j
 import type { TurnRecord, TurnStore } from '../ports/turn-store.js'
 import type { AgentToolDefinition } from '../tool.js'
 
+import { decideEmptyRecovery, type EmptyRecoveryMode } from './empty-recovery.js'
 import { loadMemoryBlock } from './memory.js'
 import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
 
@@ -38,9 +39,14 @@ import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
  *   ✓ Memory load via `MemoryStore.load` (formatted into dynamic system segment)
  *   ✓ Anthropic prompt-cache breakpoints via `applyCacheBreakpoints`
  *
+ *   ✓ Empty-recovery classifier wired in for observability — every
+ *     finished turn runs `decideEmptyRecovery`. When triggered, the
+ *     decision is surfaced as a `turn.empty_recovery` telemetry event
+ *     plus a warn log, and recorded on `TurnRecord.metadata.empty_recovery_code`.
+ *     Mid-stream synthesis injection is NOT YET wired — streamText v6
+ *     does not expose a writer the kernel can splice into.
+ *
  * Deferred to later slices / releases:
- *   ☐ Empty-recovery classifier — exposed as a helper in slice 5;
- *     calling routes decide what to do with the signal.
  *   ☐ OpenAI fallback retry wrapper inside runChatTurn — slice 5
  *     ships the helper primitives (`shouldFallback`, `mapModelToOpenAI`)
  *     so hosts can compose the retry themselves. Built-in retry
@@ -141,6 +147,27 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext> {
      * tool call). Set higher for agents that do deep multi-step work.
      */
     maxSteps?: number
+    /**
+     * Empty-recovery classifier mode. Default `'log_only'` — the kernel
+     * detects the tool-loop-no-text case on every finished turn and
+     * emits a `turn.empty_recovery` telemetry event + warn log when it
+     * triggers, but does NOT modify the persisted content. Set to
+     * `'off'` to disable the classifier entirely. `'enforce'` is
+     * accepted for forward-compat — today the kernel cannot inject
+     * fallback text mid-stream (streamText writer access is not
+     * exposed), so `'enforce'` currently behaves like `'log_only'` from
+     * the end-user's perspective; the persisted `metadata.empty_recovery_code`
+     * still records the recovered code so audit/dashboards can
+     * distinguish the two modes.
+     */
+    emptyRecoveryMode?: EmptyRecoveryMode
+    /**
+     * Locale-appropriate fallback string the classifier records when
+     * `emptyRecoveryMode === 'enforce'` triggers. Today this is only
+     * surfaced via telemetry — the kernel does NOT splice it into the
+     * stream (see `emptyRecoveryMode` JSDoc). Defaults to empty string.
+     */
+    emptyRecoveryFallback?: string
 }
 
 export async function runChatTurn<TCtx extends BaseToolContext>(
@@ -375,6 +402,27 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
             )
             const costUsdMicro = Math.max(0, Math.round(costUsd * 1_000_000))
 
+            // ── Empty-recovery classifier ───────────────────────────
+            // Pure decision: detect the tool-loop-no-text case and
+            // surface it via telemetry + log. The kernel intentionally
+            // does NOT splice fallback text into the stream — AI SDK
+            // v6 does not expose a writer streamText can be spliced
+            // into. Once that lands, the `'enforce'` branch will gain
+            // mid-stream injection; until then it's observability only.
+            const eventText = typeof event.text === 'string' ? event.text : ''
+            const toolCallsList = Array.isArray(
+                (event as { toolCalls?: unknown }).toolCalls
+            )
+                ? (event as { toolCalls: unknown[] }).toolCalls
+                : []
+            const isToolLoopNoText =
+                eventText.trim().length === 0 && toolCallsList.length > 0
+            const recoveryDecision = decideEmptyRecovery({
+                mode: args.emptyRecoveryMode ?? 'log_only',
+                isToolLoopNoText,
+                fallbackText: args.emptyRecoveryFallback ?? '',
+            })
+
             const finalTurn: TurnRecord = {
                 id: turnId,
                 threadId: args.threadId,
@@ -392,6 +440,12 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
                 createdAt: startedAt,
                 updatedAt: finishedAt,
             }
+            if (recoveryDecision.triggered && recoveryDecision.persistedErrorCode) {
+                finalTurn.metadata = {
+                    ...(finalTurn.metadata ?? {}),
+                    empty_recovery_code: recoveryDecision.persistedErrorCode,
+                }
+            }
 
             try {
                 await args.ports.turnStore.upsert(finalTurn)
@@ -400,6 +454,30 @@ export async function runChatTurn<TCtx extends BaseToolContext>(
                     turnId,
                     error: e instanceof Error ? e.message : String(e),
                 })
+            }
+
+            // Emit the empty-recovery event BEFORE turn.finalized so
+            // downstream consumers that join the two events get them
+            // in causal order. Warn-log mirrors the event for stack
+            // traces that don't have the telemetry pipeline attached.
+            if (recoveryDecision.triggered) {
+                logger.warn('runChatTurn empty-recovery classifier triggered', {
+                    turnId,
+                    threadId: args.threadId,
+                    tenantId: args.ctx.tenantId,
+                    mode: recoveryDecision.mode,
+                    persistedErrorCode: recoveryDecision.persistedErrorCode,
+                })
+                void telemetry.emit([
+                    {
+                        type: 'turn.empty_recovery',
+                        turnId,
+                        threadId: args.threadId,
+                        tenantId: args.ctx.tenantId,
+                        decision: recoveryDecision,
+                        occurredAt: finishedAt,
+                    },
+                ])
             }
 
             // Post-call quota accounting. Fire-and-forget — a slow

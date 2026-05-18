@@ -62,6 +62,35 @@ export type TelemetryEvent =
           mode: string
           occurredAt: Date
       }
+    | {
+          /**
+           * Emitted by `runChatTurn` whenever the empty-recovery
+           * classifier engages on a finished turn (`decision.triggered === true`).
+           * The not-triggered path is intentionally NOT emitted — operators
+           * dashboard stalled rates, not the steady-state pass.
+           *
+           * Note: this event reports the classifier outcome only.
+           * Mid-stream synthesis injection is a future kernel feature;
+           * `streamText` does not currently expose a writer the kernel
+           * can splice into.
+           *
+           * The `decision` field carries the full `EmptyRecoveryDecision`
+           * struct returned by the `decideEmptyRecovery` helper. Inlined
+           * here as a structural shape so the ports layer stays free of
+           * runtime/* imports.
+           */
+          type: 'turn.empty_recovery'
+          turnId: string
+          threadId: string
+          tenantId: string
+          decision: {
+              triggered: boolean
+              mode: 'off' | 'log_only' | 'enforce'
+              fallbackText: string | null
+              persistedErrorCode: string | null
+          }
+          occurredAt: Date
+      }
 
 export interface TelemetrySink {
     /** Batched async send. Implementations should handle batching + retries internally. */

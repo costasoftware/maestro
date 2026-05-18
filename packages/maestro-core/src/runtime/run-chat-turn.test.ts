@@ -4,6 +4,8 @@ import { z } from 'zod'
 import type { BaseToolContext } from '../context.js'
 import { ok } from '../envelope.js'
 import { FixedClock } from '../ports/clock.js'
+import type { Logger } from '../ports/logger.js'
+import type { TelemetryEvent, TelemetrySink } from '../ports/telemetry-sink.js'
 import { defineAgentTool } from '../tool.js'
 
 /**
@@ -271,5 +273,221 @@ describe('runChatTurn → streamText handoff (regression guard)', () => {
             typeof msg === 'string' && msg.includes('empty tool registry')
         )
         expect(emptyWarns.length).toBe(0)
+    })
+})
+
+/**
+ * Empty-recovery wire-in regression suite.
+ *
+ * runChatTurn classifies every finished turn via `decideEmptyRecovery`
+ * and surfaces the outcome via the TelemetrySink + Logger ports. Mid-
+ * stream injection is NOT yet wired (streamText v6 doesn't expose a
+ * writer), so these tests cover observability only.
+ *
+ * Strategy: capture the `onFinish` callback streamText receives, drive
+ * it manually with synthetic `event` objects shaped like the AI SDK's
+ * `onFinish` payload, then assert the telemetry sink + logger were
+ * called with the right discriminator and shape.
+ */
+describe('runChatTurn → empty-recovery wire-in', () => {
+    function captureOnFinish(): () => (event: unknown) => Promise<void> {
+        return () => {
+            const call = streamTextMock.mock.calls.at(-1)?.[0] as
+                | { onFinish?: (event: unknown) => Promise<void> }
+                | undefined
+            if (!call?.onFinish) {
+                throw new Error('onFinish was not passed to streamText')
+            }
+            return call.onFinish
+        }
+    }
+
+    function makeTelemetry(): { sink: TelemetrySink; events: TelemetryEvent[] } {
+        const events: TelemetryEvent[] = []
+        return {
+            events,
+            sink: {
+                emit: async (batch) => {
+                    events.push(...batch)
+                },
+            },
+        }
+    }
+
+    function makeLogger(): { logger: Logger; warnCalls: Array<[string, object | undefined]> } {
+        const warnCalls: Array<[string, object | undefined]> = []
+        return {
+            warnCalls,
+            logger: {
+                debug: () => {},
+                info: () => {},
+                warn: (msg, meta) => {
+                    warnCalls.push([msg, meta])
+                },
+                error: () => {},
+            },
+        }
+    }
+
+    it('does NOT emit turn.empty_recovery when the turn has text (classifier returns triggered=false)', async () => {
+        const { sink, events } = makeTelemetry()
+        const { logger, warnCalls } = makeLogger()
+
+        await runChatTurn(
+            makeArgs({
+                ports: {
+                    ...makePorts(),
+                    clock: new FixedClock(FIXED),
+                    telemetry: sink,
+                    logger,
+                },
+            })
+        )
+        const grab = captureOnFinish()
+        await grab()({
+            text: 'Here is your answer.',
+            toolCalls: [{ toolName: 'lookup' }],
+            usage: { inputTokens: 10, outputTokens: 20 },
+        })
+
+        const recoveryEvents = events.filter((e) => e.type === 'turn.empty_recovery')
+        expect(recoveryEvents).toHaveLength(0)
+        // turn.finalized still fires.
+        expect(events.some((e) => e.type === 'turn.finalized')).toBe(true)
+        // No warn for the no-op case.
+        expect(
+            warnCalls.some(([msg]) => msg.includes('empty-recovery classifier triggered'))
+        ).toBe(false)
+    })
+
+    it('emits turn.empty_recovery (log_only) when tools ran but text is empty', async () => {
+        const { sink, events } = makeTelemetry()
+        const { logger, warnCalls } = makeLogger()
+
+        await runChatTurn(
+            makeArgs({
+                ports: {
+                    ...makePorts(),
+                    clock: new FixedClock(FIXED),
+                    telemetry: sink,
+                    logger,
+                },
+                // Default mode is 'log_only' but spell it out for clarity.
+                emptyRecoveryMode: 'log_only',
+            })
+        )
+        const grab = captureOnFinish()
+        await grab()({
+            text: '',
+            toolCalls: [{ toolName: 'lookup' }],
+            usage: { inputTokens: 10, outputTokens: 0 },
+        })
+
+        const recoveryEvents = events.filter((e) => e.type === 'turn.empty_recovery')
+        expect(recoveryEvents).toHaveLength(1)
+        const evt = recoveryEvents[0] as Extract<TelemetryEvent, { type: 'turn.empty_recovery' }>
+        expect(evt.turnId).toBeDefined()
+        expect(evt.threadId).toBe('thread_x')
+        expect(evt.tenantId).toBe('42')
+        expect(evt.decision.triggered).toBe(true)
+        expect(evt.decision.mode).toBe('log_only')
+        expect(evt.decision.persistedErrorCode).toBe('tool_loop_no_text_logged')
+        expect(evt.decision.fallbackText).toBeNull()
+
+        // Telemetry order: empty_recovery before turn.finalized.
+        const recoveryIdx = events.findIndex((e) => e.type === 'turn.empty_recovery')
+        const finalizedIdx = events.findIndex((e) => e.type === 'turn.finalized')
+        expect(recoveryIdx).toBeLessThan(finalizedIdx)
+
+        // Warn fires with structured context.
+        const warn = warnCalls.find(([msg]) =>
+            msg.includes('empty-recovery classifier triggered')
+        )
+        expect(warn).toBeDefined()
+        expect(warn?.[1]).toMatchObject({
+            tenantId: '42',
+            threadId: 'thread_x',
+            mode: 'log_only',
+            persistedErrorCode: 'tool_loop_no_text_logged',
+        })
+    })
+
+    it('emits turn.empty_recovery (enforce) with the fallback text + recovered code, and records metadata.empty_recovery_code on the TurnStore upsert', async () => {
+        const { sink, events } = makeTelemetry()
+        const { logger, warnCalls } = makeLogger()
+        const ports = makePorts()
+
+        await runChatTurn(
+            makeArgs({
+                ports: {
+                    ...ports,
+                    clock: new FixedClock(FIXED),
+                    telemetry: sink,
+                    logger,
+                },
+                emptyRecoveryMode: 'enforce',
+                emptyRecoveryFallback: 'Desculpe, tive um problema. Pode tentar de novo?',
+            })
+        )
+        const grab = captureOnFinish()
+        await grab()({
+            text: '',
+            toolCalls: [{ toolName: 'lookup' }],
+            usage: { inputTokens: 10, outputTokens: 0 },
+        })
+
+        const recoveryEvents = events.filter((e) => e.type === 'turn.empty_recovery')
+        expect(recoveryEvents).toHaveLength(1)
+        const evt = recoveryEvents[0] as Extract<TelemetryEvent, { type: 'turn.empty_recovery' }>
+        expect(evt.decision.mode).toBe('enforce')
+        expect(evt.decision.persistedErrorCode).toBe('tool_loop_no_text_recovered_fallback')
+        expect(evt.decision.fallbackText).toBe(
+            'Desculpe, tive um problema. Pode tentar de novo?'
+        )
+
+        // Warn fired for the non-ok decision.
+        expect(
+            warnCalls.some(([msg]) => msg.includes('empty-recovery classifier triggered'))
+        ).toBe(true)
+
+        // Final assistant upsert carries the recovered code in metadata.
+        // The first upsert is the 'pending' row; the second is the
+        // 'completed' row written from onFinish.
+        const upsertCalls = (ports.turnStore.upsert as ReturnType<typeof vi.fn>).mock.calls
+        const finalUpsert = upsertCalls.at(-1)?.[0] as
+            | { status?: string; metadata?: Record<string, unknown> }
+            | undefined
+        expect(finalUpsert?.status).toBe('completed')
+        expect(finalUpsert?.metadata).toMatchObject({
+            empty_recovery_code: 'tool_loop_no_text_recovered_fallback',
+        })
+    })
+
+    it('does nothing when emptyRecoveryMode is "off"', async () => {
+        const { sink, events } = makeTelemetry()
+        const { logger, warnCalls } = makeLogger()
+
+        await runChatTurn(
+            makeArgs({
+                ports: {
+                    ...makePorts(),
+                    clock: new FixedClock(FIXED),
+                    telemetry: sink,
+                    logger,
+                },
+                emptyRecoveryMode: 'off',
+            })
+        )
+        const grab = captureOnFinish()
+        await grab()({
+            text: '',
+            toolCalls: [{ toolName: 'lookup' }],
+            usage: { inputTokens: 10, outputTokens: 0 },
+        })
+
+        expect(events.filter((e) => e.type === 'turn.empty_recovery')).toHaveLength(0)
+        expect(
+            warnCalls.some(([msg]) => msg.includes('empty-recovery classifier triggered'))
+        ).toBe(false)
     })
 })
