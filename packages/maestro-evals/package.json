@@ -1,0 +1,82 @@
+{
+    "name": "maestro-evals",
+    "version": "0.1.0",
+    "description": "Golden-prompt regression guard for the Maestro agent runtime. Static evals (mock-based, every CI) plus live evals (real Anthropic, scheduled) that catch the four Anthropic tool-calling traps before they ship.",
+    "license": "Apache-2.0",
+    "author": "Costa Software",
+    "homepage": "https://github.com/costasoftware/maestro/tree/main/packages/maestro-evals#readme",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/costasoftware/maestro.git",
+        "directory": "packages/maestro-evals"
+    },
+    "bugs": {
+        "url": "https://github.com/costasoftware/maestro/issues"
+    },
+    "keywords": [
+        "ai",
+        "agent",
+        "eval",
+        "regression",
+        "anthropic",
+        "tool-calling",
+        "ai-sdk",
+        "maestro"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "bin": {
+        "maestro-evals": "./dist/cli.js"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        },
+        "./assertions": {
+            "types": "./dist/assertions.d.ts",
+            "import": "./dist/assertions.js"
+        },
+        "./fixtures": {
+            "types": "./dist/fixtures.d.ts",
+            "import": "./dist/fixtures.js"
+        }
+    },
+    "files": [
+        "dist",
+        "fixtures",
+        "README.md"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+        "test": "vitest run",
+        "lint": "echo \"(lint not yet configured)\" && exit 0",
+        "typecheck": "tsc -p tsconfig.build.json --noEmit",
+        "clean": "rm -rf dist .turbo *.tsbuildinfo",
+        "prepublishOnly": "rm -rf dist .turbo *.tsbuildinfo && tsc -p tsconfig.build.json && chmod +x dist/cli.js"
+    },
+    "peerDependencies": {
+        "@ai-sdk/anthropic": "^3.0.0",
+        "ai": "^6.0.0",
+        "maestro-core": "^0.4.0",
+        "zod": "^3.25.0"
+    },
+    "peerDependenciesMeta": {
+        "@ai-sdk/anthropic": {
+            "optional": true
+        }
+    },
+    "devDependencies": {
+        "@ai-sdk/anthropic": "^3.0.71",
+        "@types/node": "^22.10.0",
+        "ai": "^6.0.0",
+        "maestro-core": "workspace:*",
+        "typescript": "^5.7.2",
+        "vitest": "^2.1.8",
+        "zod": "^3.25.0"
+    },
+    "publishConfig": {
+        "access": "public"
+    }
+}
