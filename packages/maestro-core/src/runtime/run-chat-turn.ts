@@ -1,5 +1,11 @@
 import { createAnthropic } from '@ai-sdk/anthropic'
-import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from 'ai'
+import {
+    convertToModelMessages,
+    stepCountIs,
+    streamText,
+    type UIMessage,
+    type UIMessageStreamWriter,
+} from 'ai'
 
 import { buildAiSdkTools } from '../adapters/ai-sdk.js'
 import { applyCacheBreakpoints } from '../cache-control.js'
@@ -43,8 +49,19 @@ import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
  *     finished turn runs `decideEmptyRecovery`. When triggered, the
  *     decision is surfaced as a `turn.empty_recovery` telemetry event
  *     plus a warn log, and recorded on `TurnRecord.metadata.empty_recovery_code`.
- *     Mid-stream synthesis injection is NOT YET wired — streamText v6
- *     does not expose a writer the kernel can splice into.
+ *   ✓ Empty-recovery `enforce` mode now performs mid-stream synthesis
+ *     injection when the host opts into the writer-arg path. The kernel
+ *     fires a second `streamText` call with `toolChoice: 'none'`, reuses
+ *     the same cached `system` + `tools` blocks (no cache eviction), and
+ *     merges its output into the host-supplied writer. When `enforce` is
+ *     set but no writer is supplied, the kernel emits a
+ *     `turn.empty_recovery_skipped` telemetry event and degrades to the
+ *     log-only path (cannot inject without a writer).
+ *   ✓ Optional `writer` arg — when supplied, the kernel merges streamText
+ *     output into the host-owned UI message stream instead of returning
+ *     a standalone Response. Hosts use this to wrap the call in
+ *     `createUIMessageStream` and emit pre/post-stream data chips
+ *     (status, citations, etc.).
  *
  * Deferred to later slices / releases:
  *   ☐ OpenAI fallback retry wrapper inside runChatTurn — slice 5
@@ -152,27 +169,71 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext<string>> {
      * detects the tool-loop-no-text case on every finished turn and
      * emits a `turn.empty_recovery` telemetry event + warn log when it
      * triggers, but does NOT modify the persisted content. Set to
-     * `'off'` to disable the classifier entirely. `'enforce'` is
-     * accepted for forward-compat — today the kernel cannot inject
-     * fallback text mid-stream (streamText writer access is not
-     * exposed), so `'enforce'` currently behaves like `'log_only'` from
-     * the end-user's perspective; the persisted `metadata.empty_recovery_code`
-     * still records the recovered code so audit/dashboards can
-     * distinguish the two modes.
+     * `'off'` to disable the classifier entirely.
+     *
+     * `'enforce'` mode performs mid-stream synthesis injection: when
+     * the classifier triggers AND `args.writer` is supplied, the kernel
+     * fires a SECOND `streamText` call (same model, same cached system
+     * + tools to preserve prompt-cache reuse, `toolChoice: 'none'` to
+     * stop the loop) using `recoveryDecision.fallbackText` as the
+     * synthesis instruction, and merges the result into the host's
+     * writer. When `'enforce'` is set but no `writer` is supplied, the
+     * kernel cannot inject — it logs warn, emits
+     * `turn.empty_recovery_skipped`, and degrades to log_only behaviour.
+     *
+     * Cost: enforce-mode injection is a second model call. Token usage
+     * from the second call is added to the persisted `TurnRecord`
+     * tokensIn/tokensOut/costUsdMicro via a follow-up TurnStore upsert
+     * fired from the second stream's own `onFinish`. Hosts reading
+     * persisted turns will see the combined total.
      */
     emptyRecoveryMode?: EmptyRecoveryMode
     /**
-     * Locale-appropriate fallback string the classifier records when
-     * `emptyRecoveryMode === 'enforce'` triggers. Today this is only
-     * surfaced via telemetry — the kernel does NOT splice it into the
-     * stream (see `emptyRecoveryMode` JSDoc). Defaults to empty string.
+     * Locale + surface-appropriate fallback string. In `'log_only'`
+     * mode this is surfaced via telemetry only. In `'enforce'` mode
+     * with a writer supplied, it is also used as the synthesis
+     * instruction for the second `streamText` call — the kernel injects
+     * it as a final user-shaped instruction asking the model to
+     * summarise the prior tool output for the user, with the fallback
+     * as the safety-net text if synthesis itself fails. Defaults to
+     * empty string.
      */
     emptyRecoveryFallback?: string
+    /**
+     * Optional UI-message stream writer. When supplied, the kernel
+     * merges the `streamText` output into this writer instead of
+     * returning a standalone `Response`. The host owns the outer
+     * `createUIMessageStream` wrapper and is free to `writer.write(...)`
+     * data chips (status pings, citations, gap-reason, etc.) before
+     * AND after the kernel call.
+     *
+     * Usage:
+     *
+     *   return createUIMessageStreamResponse({
+     *       stream: createUIMessageStream({
+     *           execute: async ({ writer }) => {
+     *               writer.write({ type: 'data-status', data: 'thinking' })
+     *               await runChatTurn({ ...args, writer })
+     *               writer.write({ type: 'data-citations', data: cites })
+     *           },
+     *       }),
+     *   })
+     *
+     * When omitted (default), `runChatTurn` returns a `Response` as
+     * before — no behaviour change for existing callers.
+     *
+     * Empty-recovery `'enforce'` mode also requires this arg to perform
+     * mid-stream synthesis injection (the second `streamText` call's
+     * output is merged into this same writer). Without a writer,
+     * enforce-mode degrades to log-only and emits
+     * `turn.empty_recovery_skipped`.
+     */
+    writer?: UIMessageStreamWriter
 }
 
 export async function runChatTurn<TCtx extends BaseToolContext<string>>(
     args: RunChatTurnArgs<TCtx>
-): Promise<Response> {
+): Promise<Response | undefined> {
     const clock = args.ports.clock ?? new SystemClock()
     const logger = args.ports.logger ?? new SilentLogger()
     const telemetry = args.ports.telemetry ?? new NoopTelemetrySink()
@@ -404,11 +465,12 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
 
             // ── Empty-recovery classifier ───────────────────────────
             // Pure decision: detect the tool-loop-no-text case and
-            // surface it via telemetry + log. The kernel intentionally
-            // does NOT splice fallback text into the stream — AI SDK
-            // v6 does not expose a writer streamText can be spliced
-            // into. Once that lands, the `'enforce'` branch will gain
-            // mid-stream injection; until then it's observability only.
+            // surface it via telemetry + log. When `mode === 'enforce'`
+            // AND the host supplied a `writer`, a second `streamText`
+            // call is fired below to synthesise text from the tool
+            // output and merged into the same UI stream. Without a
+            // writer, enforce-mode degrades to log-only and emits
+            // `turn.empty_recovery_skipped`.
             const eventText = typeof event.text === 'string' ? event.text : ''
             const toolCallsList = Array.isArray(
                 (event as { toolCalls?: unknown }).toolCalls
@@ -422,6 +484,189 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
                 isToolLoopNoText,
                 fallbackText: args.emptyRecoveryFallback ?? '',
             })
+
+            // ── Enforce-mode synthesis injection ────────────────────
+            // When `mode === 'enforce'` AND a writer was supplied, fire
+            // a second `streamText` call to synthesise text from the
+            // prior tool output and merge it into the same UI stream.
+            // The second call:
+            //   - Re-uses `cached.system` and `cached.tools` so the
+            //     Anthropic prompt cache hits (NO cache eviction). This
+            //     is the cost constraint called out in the design spec —
+            //     a fresh system/tools array would double the cached
+            //     prompt cost.
+            //   - Sets `toolChoice: 'none'` to force a pure-text reply
+            //     (no second tool round-trip, no infinite loop).
+            //   - Sets `stopWhen: stepCountIs(1)` for the same reason —
+            //     synthesis is one model response, not a multi-step
+            //     loop.
+            //   - Appends `event.response.messages` (the prior assistant
+            //     turn's tool_use + tool_result blocks) so the model has
+            //     the tool output to summarise.
+            //   - Tracks token usage from the second call via its own
+            //     `onFinish` and re-upserts the turn row with combined
+            //     totals. Hosts reading persisted turns see the union.
+            //
+            // Recovery is NOT re-evaluated for the second call — by
+            // construction it produces synthesised text or the fallback
+            // string, neither of which is a tool-loop-no-text case.
+            //
+            // When `mode === 'enforce'` but NO writer was supplied, the
+            // kernel logs warn + emits `turn.empty_recovery_skipped` and
+            // degrades to log-only behaviour (cannot inject without a
+            // place to merge the second stream).
+            const synthesisShouldRun =
+                recoveryDecision.triggered &&
+                recoveryDecision.mode === 'enforce'
+            let synthesisActuallyFired = false
+            let synthesisExtraTokensIn = 0
+            let synthesisExtraTokensOut = 0
+            let synthesisExtraCostUsdMicro = 0
+
+            if (synthesisShouldRun) {
+                if (args.writer) {
+                    try {
+                        const responseMessages = Array.isArray(
+                            event.response?.messages
+                        )
+                            ? event.response.messages
+                            : []
+                        const synthesisInstruction =
+                            recoveryDecision.fallbackText && recoveryDecision.fallbackText.length > 0
+                                ? `The previous assistant turn invoked one or more tools and received valid results, but produced zero user-visible text. Summarise the tool output for the user in one short paragraph (1-3 sentences). If you cannot, reply with exactly: ${recoveryDecision.fallbackText}`
+                                : 'The previous assistant turn invoked one or more tools and received valid results, but produced zero user-visible text. Summarise the tool output for the user in one short paragraph (1-3 sentences).'
+                        const synthesisStream = streamText({
+                            model,
+                            system: cached.system,
+                            messages: [
+                                ...userMessages,
+                                ...responseMessages,
+                                { role: 'user', content: synthesisInstruction },
+                            ],
+                            tools: cached.tools,
+                            toolChoice: 'none',
+                            stopWhen: stepCountIs(1),
+                            abortSignal: args.abortSignal,
+                            onFinish: async (synthEvent) => {
+                                const synthFinishedAt = clock.now()
+                                const synthUsage = (synthEvent.usage ?? null) as {
+                                    inputTokens?: number
+                                    outputTokens?: number
+                                    cachedInputTokens?: number
+                                } | null
+                                synthesisExtraTokensIn = synthUsage?.inputTokens ?? 0
+                                synthesisExtraTokensOut = synthUsage?.outputTokens ?? 0
+                                const synthCacheRead = synthUsage?.cachedInputTokens ?? 0
+                                const synthCostUsd = estimateCost(
+                                    {
+                                        input: synthesisExtraTokensIn,
+                                        output: synthesisExtraTokensOut,
+                                        cacheRead: synthCacheRead,
+                                        cacheWrite: 0,
+                                    },
+                                    selection.modelId
+                                )
+                                synthesisExtraCostUsdMicro = Math.max(
+                                    0,
+                                    Math.round(synthCostUsd * 1_000_000)
+                                )
+
+                                // Re-upsert with combined totals. The
+                                // assistant content stays as the first
+                                // call's text (empty); the synthesised
+                                // text was streamed via the writer and
+                                // the host's UI-message persistence
+                                // path captures it. The metadata still
+                                // records the recovery code.
+                                try {
+                                    await args.ports.turnStore.upsert({
+                                        id: turnId,
+                                        threadId: args.threadId,
+                                        tenantId: args.ctx.tenantId,
+                                        role: 'assistant',
+                                        content: event.text,
+                                        status: 'completed',
+                                        modelId: selection.modelId,
+                                        tokensIn: tokensIn + synthesisExtraTokensIn,
+                                        tokensOut: tokensOut + synthesisExtraTokensOut,
+                                        cacheReadTokens:
+                                            cacheReadTokens + synthCacheRead,
+                                        cacheWriteTokens,
+                                        costUsdMicro:
+                                            costUsdMicro + synthesisExtraCostUsdMicro,
+                                        durationMs:
+                                            synthFinishedAt.getTime() -
+                                            startedAt.getTime(),
+                                        createdAt: startedAt,
+                                        updatedAt: synthFinishedAt,
+                                        metadata: {
+                                            empty_recovery_code:
+                                                recoveryDecision.persistedErrorCode,
+                                            empty_recovery_synthesis_tokens_in:
+                                                synthesisExtraTokensIn,
+                                            empty_recovery_synthesis_tokens_out:
+                                                synthesisExtraTokensOut,
+                                        },
+                                    })
+                                } catch (e) {
+                                    logger.error(
+                                        'runChatTurn turnStore.upsert failed (synthesis)',
+                                        {
+                                            turnId,
+                                            error:
+                                                e instanceof Error
+                                                    ? e.message
+                                                    : String(e),
+                                        }
+                                    )
+                                }
+                            },
+                            onError: ({ error }) => {
+                                logger.error(
+                                    'runChatTurn synthesis streamText error',
+                                    {
+                                        turnId,
+                                        message:
+                                            error instanceof Error
+                                                ? error.message
+                                                : String(error),
+                                    }
+                                )
+                            },
+                        })
+                        args.writer.merge(synthesisStream.toUIMessageStream())
+                        synthesisActuallyFired = true
+                    } catch (e) {
+                        logger.error(
+                            'runChatTurn enforce-mode synthesis injection failed',
+                            {
+                                turnId,
+                                error: e instanceof Error ? e.message : String(e),
+                            }
+                        )
+                    }
+                } else {
+                    logger.warn(
+                        'runChatTurn empty-recovery enforce requested but no writer was supplied; degrading to log-only',
+                        {
+                            turnId,
+                            threadId: args.threadId,
+                            tenantId: args.ctx.tenantId,
+                        }
+                    )
+                    void telemetry.emit([
+                        {
+                            type: 'turn.empty_recovery_skipped',
+                            turnId,
+                            threadId: args.threadId,
+                            tenantId: args.ctx.tenantId,
+                            reason: 'no_writer',
+                            requestedMode: 'enforce',
+                            occurredAt: finishedAt,
+                        },
+                    ])
+                }
+            }
 
             const finalTurn: TurnRecord = {
                 id: turnId,
@@ -447,13 +692,19 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
                 }
             }
 
-            try {
-                await args.ports.turnStore.upsert(finalTurn)
-            } catch (e) {
-                logger.error('runChatTurn turnStore.upsert failed', {
-                    turnId,
-                    error: e instanceof Error ? e.message : String(e),
-                })
+            // Skip the initial upsert when synthesis fired — its own
+            // `onFinish` will write the row with combined totals. This
+            // avoids an intermediate row state with partial cost data
+            // that downstream consumers might over-read.
+            if (!synthesisActuallyFired) {
+                try {
+                    await args.ports.turnStore.upsert(finalTurn)
+                } catch (e) {
+                    logger.error('runChatTurn turnStore.upsert failed', {
+                        turnId,
+                        error: e instanceof Error ? e.message : String(e),
+                    })
+                }
             }
 
             // Emit the empty-recovery event BEFORE turn.finalized so
@@ -568,6 +819,15 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
             }
         },
     })
+
+    // Writer arg path: host owns the outer createUIMessageStream and
+    // we merge into it so the host can sandwich pre/post chips around
+    // the kernel call. Return void so the host knows there's no
+    // standalone Response to forward.
+    if (args.writer) {
+        args.writer.merge(stream.toUIMessageStream())
+        return undefined
+    }
 
     return stream.toUIMessageStreamResponse()
 }
