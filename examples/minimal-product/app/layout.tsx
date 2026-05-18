@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 
 export const metadata: Metadata = {
     title: 'Maestro example — minimal product',
-    description: 'Smallest possible host consuming maestro-core.',
+    description: 'Smallest possible host consuming @maestro/core.',
 }
 
 export const viewport: Viewport = {

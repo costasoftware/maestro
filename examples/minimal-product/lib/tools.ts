@@ -1,4 +1,4 @@
-import { defineAgentTool, err, ok } from 'maestro-core'
+import { defineAgentTool, err, ok } from '@maestro/core'
 import { z } from 'zod'
 
 import type { ExampleCtx } from './context.js'
