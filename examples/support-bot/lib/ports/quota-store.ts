@@ -1,4 +1,4 @@
-import type { Ceilings, QuotaState, QuotaStore, QuotaUsage } from '@maestro/core'
+import type { Ceilings, QuotaState, QuotaStore, QuotaUsage } from 'maestro-core'
 
 /**
  * Per-tenant call counter with a generous fixed ceiling. Demonstrates

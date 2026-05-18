@@ -2,12 +2,12 @@
  * Pure assertion primitives shared by every eval runner.
  *
  * Each function maps to a documented Anthropic tool-calling trap from
- * the `@maestro/core` README. Assertions throw `EvalAssertionError` on
+ * the `maestro-core` README. Assertions throw `EvalAssertionError` on
  * failure — the runner catches and packages them into the report.
  *
  * The functions are pure and dependency-free so they can be reused
  * outside the eval harness (custom integration tests, replay tooling,
- * one-off scripts). Nothing here imports `@maestro/core` directly.
+ * one-off scripts). Nothing here imports `maestro-core` directly.
  *
  * See [[ai_sdk_tools_function_calls_xml_in_prose]] for the failure
  * mode catalog these guard against.

@@ -1,4 +1,4 @@
-import type { BaseToolContext } from '@maestro/core'
+import type { BaseToolContext } from 'maestro-core'
 
 /**
  * Transports this product exposes. Two surfaces:

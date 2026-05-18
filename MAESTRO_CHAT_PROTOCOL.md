@@ -191,7 +191,7 @@ Semantic versioning, with `0.1.0-beta` as the first published shape.
 | Change a field's type | major |
 | Tighten validation (formerly accepted payloads now rejected) | major |
 
-The protocol version is exposed in TS as `MAESTRO_PROTOCOL_VERSION` from `@maestro/react`. Backends SHOULD echo the version they target somewhere in their `done.metadata` or a `data` event with `key: "maestro.protocol_version"`.
+The protocol version is exposed in TS as `MAESTRO_PROTOCOL_VERSION` from `maestro-react`. Backends SHOULD echo the version they target somewhere in their `done.metadata` or a `data` event with `key: "maestro.protocol_version"`.
 
 ---
 

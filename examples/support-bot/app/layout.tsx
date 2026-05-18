@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 
 export const metadata: Metadata = {
     title: 'Maestro example — support-bot',
-    description: 'Multi-tenant customer-support bot validating @maestro/core generality.',
+    description: 'Multi-tenant customer-support bot validating maestro-core generality.',
 }
 
 export const viewport: Viewport = {

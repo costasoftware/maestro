@@ -1,4 +1,4 @@
-import type { AgentToolDefinition, BaseToolContext } from '@maestro/core'
+import type { AgentToolDefinition, BaseToolContext } from 'maestro-core'
 
 /**
  * Shape of an expected tool-call invocation as it appears in the
@@ -69,7 +69,7 @@ export interface EvalExpectations {
  * Fixtures are TypeScript modules (not JSON) so they can hold real
  * `AgentToolDefinition` objects with closures, zod schemas, and
  * imports. Authoring a fixture is the same shape as authoring a
- * `@maestro/core` tool, just with a static `mockOutput` for offline
+ * `maestro-core` tool, just with a static `mockOutput` for offline
  * runs.
  */
 export interface EvalFixture<TCtx extends BaseToolContext<string> = BaseToolContext> {
@@ -93,7 +93,7 @@ export interface EvalFixture<TCtx extends BaseToolContext<string> = BaseToolCont
      * live runner runs the real body so any side effects must be safe.
      *
      * Typed with `any, any` in the input/output slots (matching
-     * @maestro/core's `BuildAiSdkToolsArgs.registry`) so heterogeneous
+     * maestro-core's `BuildAiSdkToolsArgs.registry`) so heterogeneous
      * tool arrays unify — without it, TS rejects every multi-tool
      * fixture because `AgentToolDefinition` is invariant in its
      * input/output schemas.

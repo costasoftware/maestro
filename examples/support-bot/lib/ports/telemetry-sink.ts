@@ -1,4 +1,4 @@
-import type { TelemetryEvent, TelemetrySink } from '@maestro/core'
+import type { TelemetryEvent, TelemetrySink } from 'maestro-core'
 
 /**
  * Console-backed telemetry sink — one line per event. Useful for

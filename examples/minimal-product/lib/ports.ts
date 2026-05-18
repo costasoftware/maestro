@@ -12,7 +12,7 @@ import {
     type ToolCallAudit,
     type TurnRecord,
     type TurnStore,
-} from '@maestro/core'
+} from 'maestro-core'
 
 /**
  * In-memory port implementations for the minimal example.

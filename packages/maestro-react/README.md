@@ -1,4 +1,4 @@
-# @maestro/react
+# maestro-react
 
 React surface for the [Maestro](https://github.com/costasoftware/maestro) agent runtime.
 
@@ -24,7 +24,7 @@ import {
     type MaestroEvent,
     MAESTRO_PROTOCOL_VERSION,
     assertNever,
-} from '@maestro/react'
+} from 'maestro-react'
 ```
 
 The TS union in [`src/protocol.ts`](./src/protocol.ts) IS the spec for TS consumers. Decision rationale lives next to each event.
@@ -38,7 +38,7 @@ For backends NOT written in TS, see the language-neutral spec at the repo root: 
 ## Install
 
 ```bash
-pnpm add @maestro/react
+pnpm add maestro-react
 ```
 
 No runtime dependencies in 0.0.0. React is an OPTIONAL peer for forward compatibility with later phases.

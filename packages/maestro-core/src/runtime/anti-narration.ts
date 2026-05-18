@@ -13,7 +13,7 @@
  * `systemPrompt.static`:
  *
  *   ```ts
- *   import { antiToolNarrationRule } from '@maestro/core/runtime'
+ *   import { antiToolNarrationRule } from 'maestro-core/runtime'
  *
  *   runChatTurn({
  *     systemPrompt: {

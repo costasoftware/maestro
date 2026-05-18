@@ -1,5 +1,5 @@
 {
-    "name": "@maestro/react",
+    "name": "maestro-react",
     "version": "0.0.0",
     "description": "React surface for the Maestro agent runtime. P1 ships the MaestroChatProtocol — a wire-format-neutral event vocabulary shared across backends. Hooks, transports, and components land in later phases.",
     "license": "Apache-2.0",
