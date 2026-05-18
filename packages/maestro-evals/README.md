@@ -1,6 +1,6 @@
-# @maestro/evals
+# maestro-evals
 
-Golden-prompt regression guard for [`@maestro/core`](https://www.npmjs.com/package/@maestro/core). Catches the four documented Anthropic tool-calling traps before they hit production — the ones invisible to type checks that only surface as `<function_calls>` XML in user-facing prose.
+Golden-prompt regression guard for [`maestro-core`](https://www.npmjs.com/package/maestro-core). Catches the four documented Anthropic tool-calling traps before they hit production — the ones invisible to type checks that only surface as `<function_calls>` XML in user-facing prose.
 
 Two tiers:
 
@@ -11,7 +11,7 @@ Two tiers:
 
 ## Why this exists
 
-Over a single week of `@maestro/core` development we burned multiple sessions diagnosing the same prod incident in four different forms. All four are individually invisible to TypeScript:
+Over a single week of `maestro-core` development we burned multiple sessions diagnosing the same prod incident in four different forms. All four are individually invisible to TypeScript:
 
 | Trap | Symptom | Assertion that catches it |
 | --- | --- | --- |
@@ -25,20 +25,20 @@ A 30-second smoke eval would have caught any of them.
 ## Install
 
 ```bash
-pnpm add -D @maestro/evals
+pnpm add -D maestro-evals
 ```
 
-Peer deps: `@maestro/core ^1.0.0`, `ai ^6.0.0`, `zod ^3.25.0`. For live mode, also `@ai-sdk/anthropic ^3.0.0` and `ANTHROPIC_API_KEY`.
+Peer deps: `maestro-core ^1.0.0`, `ai ^6.0.0`, `zod ^3.25.0`. For live mode, also `@ai-sdk/anthropic ^3.0.0` and `ANTHROPIC_API_KEY`.
 
 ## Author a fixture
 
-A fixture is a TypeScript module with a default export — same authoring shape as a `@maestro/core` tool:
+A fixture is a TypeScript module with a default export — same authoring shape as a `maestro-core` tool:
 
 ```ts
 // fixtures/basic-tool-call.fixture.ts
-import { defineAgentTool, ok } from '@maestro/core'
+import { defineAgentTool, ok } from 'maestro-core'
 import { z } from 'zod'
-import type { EvalFixture } from '@maestro/evals'
+import type { EvalFixture } from 'maestro-evals'
 
 const lookupBooking = defineAgentTool({
     name: 'lookupBooking',
@@ -97,7 +97,7 @@ maestro-evals run --reporter console   # default
 ## Programmatic use
 
 ```ts
-import { runStaticEvals, runLiveEvals, type EvalFixture } from '@maestro/evals'
+import { runStaticEvals, runLiveEvals, type EvalFixture } from 'maestro-evals'
 import myFixture from './fixtures/basic-tool-call.fixture.js'
 
 const fixtures: EvalFixture[] = [myFixture]
@@ -129,7 +129,7 @@ import {
     assertNoForbiddenPhrases,
     EvalAssertionError,
     TOOL_NARRATION_XML_TOKENS,
-} from '@maestro/evals/assertions'
+} from 'maestro-evals/assertions'
 ```
 
 Each helper throws `EvalAssertionError` with a stable `.code` (`xml_in_prose`, `tool_fired_no_text`, `empty_tool_registry`, etc.) so callers can group / filter without parsing messages.
@@ -191,7 +191,7 @@ Summary: 2/3 passed
 - **Single-turn only** today. Multi-turn fixtures (assistant + user + assistant) are a future extension.
 - **No streaming-shape assertions**. We assert the finalised text + tool-calls; mid-stream delta shape is not checked.
 - **Static fixtures don't catch model-specific narration leaks**. That's the point of running live evals on a schedule.
-- **The static runner does not invoke `runChatTurn` directly**. It mirrors the `applyCacheBreakpoints` + tool-registry handoff so any change to runChatTurn that breaks the call-shape contract surfaces here. `runChatTurn` has its own regression suite in `@maestro/core` covering the per-turn lifecycle.
+- **The static runner does not invoke `runChatTurn` directly**. It mirrors the `applyCacheBreakpoints` + tool-registry handoff so any change to runChatTurn that breaks the call-shape contract surfaces here. `runChatTurn` has its own regression suite in `maestro-core` covering the per-turn lifecycle.
 
 ## License
 

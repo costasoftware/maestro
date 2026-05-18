@@ -11,7 +11,7 @@ export default function Page() {
             <h1 style={{ fontSize: 28, marginBottom: 8 }}>Maestro example — minimal product</h1>
             <p style={{ color: '#555' }}>
                 Smallest possible Next.js host consuming{' '}
-                <a href="https://www.npmjs.com/package/@maestro/core">@maestro/core</a>. There is no
+                <a href="https://www.npmjs.com/package/maestro-core">maestro-core</a>. There is no
                 chat UI on purpose — the integration surface is the API route.
             </p>
 

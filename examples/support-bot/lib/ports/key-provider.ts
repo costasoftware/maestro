@@ -1,4 +1,4 @@
-import type { ModelKeyProvider, ModelProvider } from '@maestro/core'
+import type { ModelKeyProvider, ModelProvider } from 'maestro-core'
 
 /**
  * Pulls Anthropic / OpenAI keys from `process.env`. Real products with

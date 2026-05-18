@@ -1,4 +1,4 @@
-# @maestro/core
+# maestro-core
 
 In-process tool-calling agent runtime for SaaS products. Model-agnostic, transport-agnostic, framework-agnostic kernel with port-based governance — powers user-support chat with shared quota, cost, audit, memory, and prompt-cache machinery without a remote gateway hop.
 
@@ -6,7 +6,7 @@ In-process tool-calling agent runtime for SaaS products. Model-agnostic, transpo
 
 ### `0.2.0` (current)
 
-- **`runChatTurn`** — one call replaces ~300 LoC of stream orchestration. Pre-call quota gate, model selection, AI SDK tool building, prompt-cache breakpoints, memory injection, turn-row persistence, post-call accounting, SSE response. Lives at `@maestro/core/runtime`.
+- **`runChatTurn`** — one call replaces ~300 LoC of stream orchestration. Pre-call quota gate, model selection, AI SDK tool building, prompt-cache breakpoints, memory injection, turn-row persistence, post-call accounting, SSE response. Lives at `maestro-core/runtime`.
 - Quota gate: `AiQuotaDeniedError`, `enforceQuotaOrThrow`, `checkAndEnforce`
 - Memory load + format: `loadMemoryBlock`, `formatMemoryBlock`
 - Empty-recovery decision: `decideEmptyRecovery`
@@ -23,13 +23,13 @@ In-process tool-calling agent runtime for SaaS products. Model-agnostic, transpo
 - 8 port interfaces: `TurnStore`, `AuditStore`, `MemoryStore`, `QuotaStore`, `ModelKeyProvider`, `TelemetrySink`, `Clock`, `Logger`
 - `applyCacheBreakpoints` — Anthropic ephemeral prompt-cache helper
 - `captureToolException` — observability hook for tool execute exceptions
-- AI SDK adapter (`@maestro/core/adapters/ai-sdk`) — wraps registry into `ToolSet` with audit + cache breakpoint
-- MCP server adapter (`@maestro/core/adapters/mcp-server`) — registers the same registry on an MCP server
+- AI SDK adapter (`maestro-core/adapters/ai-sdk`) — wraps registry into `ToolSet` with audit + cache breakpoint
+- MCP server adapter (`maestro-core/adapters/mcp-server`) — registers the same registry on an MCP server
 
 ## Install
 
 ```bash
-pnpm add @maestro/core zod
+pnpm add maestro-core zod
 # for the runtime + AI SDK adapter:
 pnpm add ai @ai-sdk/anthropic
 # for the MCP server adapter:
@@ -39,7 +39,7 @@ pnpm add @modelcontextprotocol/sdk
 ## Quickstart — defining a tool
 
 ```ts
-import { ok, err, defineAgentTool, type BaseToolContext } from '@maestro/core'
+import { ok, err, defineAgentTool, type BaseToolContext } from 'maestro-core'
 import { z } from 'zod'
 
 type MyCtx = BaseToolContext & { role: 'admin' | 'guest' }
@@ -76,7 +76,7 @@ const registry = [lookupTool, createTool, deleteTool]
 ## Quickstart — running a chat turn
 
 ```ts
-import { runChatTurn, AiQuotaDeniedError } from '@maestro/core/runtime'
+import { runChatTurn, AiQuotaDeniedError } from 'maestro-core/runtime'
 
 export async function POST(req: Request) {
     const { messages } = await req.json()
@@ -173,10 +173,10 @@ A value of `5` is safe for most agents. Tune up for chains that legitimately nee
 
 **Cause:** Anthropic models are trained on both the legacy `<function_calls>` format and the new structured format. Even when tools fire correctly, the model sometimes echoes the call in prose. Short system prompts re-surface this bias; long prompts often suppress it accidentally.
 
-**Fix:** add an explicit anti-narration rule to the system prompt. `@maestro/core/runtime` exports this as a constant and a function helper:
+**Fix:** add an explicit anti-narration rule to the system prompt. `maestro-core/runtime` exports this as a constant and a function helper:
 
 ```ts
-import { runChatTurn, antiToolNarrationRule } from '@maestro/core/runtime'
+import { runChatTurn, antiToolNarrationRule } from 'maestro-core/runtime'
 
 await runChatTurn({
     // ...
@@ -220,7 +220,7 @@ For any prompt that should invoke at least one tool, assert all of the following
 `shouldFallback` + `mapModelIdToOpenAI` give you composable retry against OpenAI when Anthropic hits a transient failure:
 
 ```ts
-import { runChatTurn, shouldFallback, mapModelIdToOpenAI } from '@maestro/core/runtime'
+import { runChatTurn, shouldFallback, mapModelIdToOpenAI } from 'maestro-core/runtime'
 
 try {
     return await runChatTurn({ ..., models: anthropicModels })

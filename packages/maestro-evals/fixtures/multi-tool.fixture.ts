@@ -1,4 +1,4 @@
-import { defineAgentTool, ok } from '@maestro/core'
+import { defineAgentTool, ok } from 'maestro-core'
 import { z } from 'zod'
 
 import type { EvalFixture } from '../src/fixtures.js'
