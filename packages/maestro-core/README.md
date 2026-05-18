@@ -57,6 +57,22 @@ export const lookupTool = defineAgentTool<z.ZodObject<{ id: z.ZodNumber }>, { na
 })
 ```
 
+### Heterogeneous tool registry — let TypeScript infer
+
+When you assemble a registry of tools with different `inputSchema` shapes, do NOT pin the array as `AnyAgentToolDefinition<MyCtx>[]`. That type is invariant on `TInput` (it sets `TInput = ZodTypeAny`); each concrete tool's `ZodObject<{...}>` is a sub-type of `ZodTypeAny` but isn't assignable in the wildcard slot:
+
+```ts
+// WRONG — TS2322 on every entry; the wildcard isn't bivariant
+const registry: AnyAgentToolDefinition<MyCtx>[] = [lookupTool, createTool, deleteTool]
+
+// RIGHT — let inference take the union
+const registry = [lookupTool, createTool, deleteTool] as const
+// or just:
+const registry = [lookupTool, createTool, deleteTool]
+```
+
+`runChatTurn`, `buildAiSdkTools`, and `registerMcpTools` all accept the inferred union as-is.
+
 ## Quickstart — running a chat turn
 
 ```ts
