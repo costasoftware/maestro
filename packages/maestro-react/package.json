@@ -1,7 +1,7 @@
 {
-    "name": "maestro-react",
+    "name": "@maestro/react",
     "version": "0.0.0",
-    "description": "Reserved name — future React hooks (useMaestroChat, tool-result rendering) for the Maestro agent runtime. See https://github.com/costasoftware/maestro.",
+    "description": "React surface for the Maestro agent runtime. P1 ships the MaestroChatProtocol — a wire-format-neutral event vocabulary shared across backends. Hooks, transports, and components land in later phases.",
     "license": "Apache-2.0",
     "author": "Costa Software",
     "homepage": "https://github.com/costasoftware/maestro/tree/main/packages/maestro-react#readme",
@@ -13,8 +13,61 @@
     "bugs": {
         "url": "https://github.com/costasoftware/maestro/issues"
     },
-    "keywords": ["maestro", "react", "ai", "agent", "reserved"],
-    "files": ["README.md"],
+    "keywords": [
+        "maestro",
+        "react",
+        "ai",
+        "agent",
+        "chat",
+        "protocol",
+        "sse",
+        "streaming"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        },
+        "./protocol": {
+            "types": "./dist/protocol.d.ts",
+            "import": "./dist/protocol.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "test": "vitest run",
+        "lint": "echo \"(lint not yet configured)\" && exit 0",
+        "typecheck": "tsc -p tsconfig.build.json --noEmit",
+        "clean": "rm -rf dist .turbo *.tsbuildinfo",
+        "prepublishOnly": "rm -rf dist .turbo *.tsbuildinfo && tsc -p tsconfig.build.json"
+    },
+    "peerDependencies": {
+        "react": ">=18",
+        "react-dom": ">=18"
+    },
+    "peerDependenciesMeta": {
+        "react": {
+            "optional": true
+        },
+        "react-dom": {
+            "optional": true
+        }
+    },
+    "devDependencies": {
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "typescript": "^5.7.2",
+        "vitest": "^2.1.8"
+    },
     "publishConfig": {
         "access": "public"
     }
