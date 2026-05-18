@@ -1,4 +1,4 @@
-import type { TurnRecord, TurnStore } from 'maestro-core'
+import type { TurnRecord, TurnStore } from '@maestro/core'
 
 /**
  * In-memory turn store keyed by host-generated turn id. Each turn row

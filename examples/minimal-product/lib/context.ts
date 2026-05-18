@@ -1,4 +1,4 @@
-import type { BaseToolContext } from 'maestro-core'
+import type { BaseToolContext } from '@maestro/core'
 
 /**
  * The surfaces this example product invokes tools from. Narrowing the

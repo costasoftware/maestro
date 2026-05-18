@@ -1,6 +1,6 @@
 # maestro-react (reserved)
 
-This name is reserved for a future React adapter on top of [`maestro-core`](https://www.npmjs.com/package/maestro-core). It will ship:
+This name is reserved for a future React adapter on top of [`@maestro/core`](https://www.npmjs.com/package/@maestro/core). It will ship:
 
 - `useMaestroChat()` — convenience hook over the AI SDK `useChat` with envelope-aware rendering
 - Helpers for tool-result cards (consumes `ToolMeta.uiRendered`)

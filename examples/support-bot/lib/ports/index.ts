@@ -14,7 +14,7 @@ import { InMemoryTurnStore } from './turn-store'
  * `runChatTurn` call — there is no global state inside the kernel. This
  * lets a single Next.js process serve multiple "products" off the same
  * kernel install if it ever needs to (different ports per route, same
- * `maestro-core` binary).
+ * `@maestro/core` binary).
  */
 export const supportBotPorts = {
     turnStore: new InMemoryTurnStore(),

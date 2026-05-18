@@ -4,7 +4,7 @@
 
 ## TL;DR
 
-In-process tool-calling agent runtime extracted from `barbeiro-app/lib/ai/*`. Ships as `@costasoftware/maestro-core` (kernel) + `@costasoftware/maestro-react` (UI hooks, future). Host products implement 7 ports (TurnStore, AuditStore, MemoryStore, QuotaStore, ModelKeyProvider, TelemetrySink, Clock + Logger).
+In-process tool-calling agent runtime extracted from `barbeiro-app/lib/ai/*`. Ships as `@maestro/core` (kernel) + `@maestro/react` (UI hooks, future). Host products implement 7 ports (TurnStore, AuditStore, MemoryStore, QuotaStore, ModelKeyProvider, TelemetrySink, Clock + Logger).
 
 Provider keys stay per-product. Tools stay in host product. Hybrid tool protocol: in-process via SDK as the fast path, MCP-over-HTTP via the same registry for external callers.
 
@@ -41,8 +41,8 @@ Counter-frame (acknowledged risk): this is borderline platform-extraction-too-ea
 
 | Package | What it ships |
 | --- | --- |
-| `@costasoftware/maestro-core` | envelope, defineAgentTool, BaseToolContext, runtime state machine, adapters (ai-sdk + mcp-server), cache-control, model router, empty-recovery, safe-tool, port interfaces, default impls (NoopTelemetrySink, InMemoryQuotaStore for tests) |
-| `@costasoftware/maestro-react` | `useMaestroChat()` hook + tool-result rendering helpers — separate package because of React peer dep |
+| `@maestro/core` | envelope, defineAgentTool, BaseToolContext, runtime state machine, adapters (ai-sdk + mcp-server), cache-control, model router, empty-recovery, safe-tool, port interfaces, default impls (NoopTelemetrySink, InMemoryQuotaStore for tests) |
+| `@maestro/react` | `useMaestroChat()` hook + tool-result rendering helpers — separate package because of React peer dep |
 
 ### Day 1 internal-only
 
@@ -53,10 +53,10 @@ Counter-frame (acknowledged risk): this is borderline platform-extraction-too-ea
 
 ### Deferred (named for ADR record; not built)
 
-- `@costasoftware/maestro-mcp-client` — consume external MCP servers as tools
-- `@costasoftware/maestro-eval` — promptfoo harness for golden paths + injection
-- `@costasoftware/maestro-telemetry` — typed plane client (v1 ships as `maestro-core` subpath)
-- `@costasoftware/maestro-cli` — scaffold / eval-run / cost-report
+- `@maestro/mcp-client` — consume external MCP servers as tools
+- `@maestro/eval` — promptfoo harness for golden paths + injection (now shipped as the live `@maestro/evals`)
+- `@maestro/telemetry` — typed plane client (v1 ships as `@maestro/core` subpath)
+- `@maestro/cli` — scaffold / eval-run / cost-report
 
 ### Semver policy
 
@@ -208,16 +208,16 @@ Each phase ships independently, has a feature flag where applicable, and is inde
 
 | Phase | Worktree / Repo | Depends on | What ships | Flag |
 | --- | --- | --- | --- | --- |
-| **P1** | `maestro/` (this repo) | none | Bootstrap: pnpm + turbo + tsconfig + CI. Empty `maestro-core` skeleton with envelope only. `0.0.1`. | — |
-| **P2** | `maestro/` | P1 | Lift `defineAgentTool` factory, `BaseToolContext`, safe-tool, cache-control. Adapter subpath: `maestro-core/adapters/ai-sdk` + `.../adapters/mcp-server`. Port INTERFACES (no impls). `0.1.0`. | — |
-| **P3** | `barbeiro-app/.claude/worktrees/maestro-adapt-p3` | P2 published | Barbeiro consumes `@costasoftware/maestro-core`. `lib/ai/envelope.ts` becomes re-export. 102 tools migrate to `defineAgentTool<I, O, BarbeiroCtx>`. NO behavior change. Behind flag for 2 weeks. | `MAESTRO_ADAPTER_ENABLED` |
+| **P1** | `maestro/` (this repo) | none | Bootstrap: pnpm + turbo + tsconfig + CI. Empty `@maestro/core` skeleton with envelope only. `0.0.1`. | — |
+| **P2** | `maestro/` | P1 | Lift `defineAgentTool` factory, `BaseToolContext`, safe-tool, cache-control. Adapter subpath: `@maestro/core/adapters/ai-sdk` + `.../adapters/mcp-server`. Port INTERFACES (no impls). `0.1.0`. | — |
+| **P3** | `barbeiro-app/.claude/worktrees/maestro-adapt-p3` | P2 published | Barbeiro consumes `@maestro/core`. `lib/ai/envelope.ts` becomes re-export. 102 tools migrate to `defineAgentTool<I, O, BarbeiroCtx>`. NO behavior change. Behind flag for 2 weeks. | `MAESTRO_ADAPTER_ENABLED` |
 | **P4** | `maestro/` | P2 | Kernel ships `runChatTurn` + lifted runtime, empty-recovery, model router, quota wrapper, memory load/store. Default in-memory port impls for tests. `0.2.0`. | — |
 | **P5** | `barbeiro-app/.claude/worktrees/maestro-ports-p5` | P3 + P4 | Barbeiro implements all port adapters (BarbeiroTurnStore, BarbeiroQuotaStore, BarbeiroMemoryStore, BarbeiroAuditStore, BarbeiroModelKeyProvider). Wires NoopTelemetrySink. `runChatTurn` callable end-to-end but not yet wired into prod routes. | — |
 | **P6** | `barbeiro-app/.claude/worktrees/maestro-guest-chat-p6` | P5 | Flip `/api/business/[slug]/chat` (guest-chat — lowest blast radius). Shadow mode for 7 days; cutover requires 7 consecutive zero-diff days. | `MAESTRO_GUEST_CHAT` |
 | **P7** | `barbeiro-app/.claude/worktrees/maestro-help-chat-p7` | P6 cutover | Same shadow → cutover for `/api/help/chat`. | `MAESTRO_HELP_CHAT` |
 | **P8** | `barbeiro-app/.claude/worktrees/maestro-whatsapp-p8` | P6 cutover | Same for whatsapp adapter. | `MAESTRO_WHATSAPP` |
 | **P9 (deferred to v1.5)** | new `maestro-plane/` repo | P4 | Plane = Next.js or Hono + Postgres. Receives async telemetry. Projects into AiUsageEvent / AiToolCallAudit. Dashboards. Deployed via Dokploy. | — |
-| **P10** | `barbeiro-app/.claude/worktrees/maestro-cleanup-p10` | P7 + P8 live ≥30 days | Delete `lib/ai/runtime/*`, `lib/ai/quota/*`, `lib/ai/memory/*`, `lib/ai/cost.ts`, `lib/ai/models.ts`, `lib/ai/cache-control.ts` from barbeiro. ESLint guards repoint at `@costasoftware/maestro-core`. AI Prisma tables stay in barbeiro for now. | — |
+| **P10** | `barbeiro-app/.claude/worktrees/maestro-cleanup-p10` | P7 + P8 live ≥30 days | Delete `lib/ai/runtime/*`, `lib/ai/quota/*`, `lib/ai/memory/*`, `lib/ai/cost.ts`, `lib/ai/models.ts`, `lib/ai/cache-control.ts` from barbeiro. ESLint guards repoint at `@maestro/core`. AI Prisma tables stay in barbeiro for now. | — |
 | **P11** | second product repo | P10 | Acceptance test for the abstraction. Target: <2 weeks to first chat turn. | — |
 
 ## What v1 explicitly doesn't solve

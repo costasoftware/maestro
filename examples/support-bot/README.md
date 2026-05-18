@@ -23,7 +23,7 @@ A simplified customer-support bot for a B2B SaaS — five tools, two transports 
 | Locale         | next-intl, 3 locales                               | hard-coded `en-US`                         | hard-coded `en-US`                 |
 | Auth           | better-auth + OAuth2 + scoped MCP tokens          | header-based mock                          | none                               |
 
-Same `maestro-core` package backs all three — the variability lives entirely in the host's ctx, ports, and route handlers.
+Same `@maestro/core` package backs all three — the variability lives entirely in the host's ctx, ports, and route handlers.
 
 ## Layout
 
@@ -152,7 +152,7 @@ The whole point of the kernel's tool factory is that a new tool is one file:
 1. Write `examples/support-bot/lib/tools/my-new-tool.ts`:
 
     ```ts
-    import { defineAgentTool, err, ok } from 'maestro-core'
+    import { defineAgentTool, err, ok } from '@maestro/core'
     import { z } from 'zod'
     import type { SupportBotCtx } from '../context'
 
