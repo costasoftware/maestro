@@ -20,12 +20,12 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
         version: 3.0.78(zod@3.25.76)
+      '@maestro/core':
+        specifier: workspace:*
+        version: link:../../packages/maestro-core
       ai:
         specifier: ^6.0.168
         version: 6.0.184(zod@3.25.76)
-      maestro-core:
-        specifier: workspace:*
-        version: link:../../packages/maestro-core
       next:
         specifier: ^15.5.0
         version: 15.5.18(@opentelemetry/api@1.9.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -57,15 +57,15 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
         version: 3.0.78(zod@3.25.76)
+      '@maestro/core':
+        specifier: workspace:*
+        version: link:../../packages/maestro-core
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@3.25.76)
       ai:
         specifier: ^6.0.168
         version: 6.0.184(zod@3.25.76)
-      maestro-core:
-        specifier: workspace:*
-        version: link:../../packages/maestro-core
       next:
         specifier: ^15.5.0
         version: 15.5.18(@opentelemetry/api@1.9.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -125,15 +125,15 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
         version: 3.0.78(zod@3.25.76)
+      '@maestro/core':
+        specifier: workspace:*
+        version: link:../maestro-core
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19
       ai:
         specifier: ^6.0.0
         version: 6.0.184(zod@3.25.76)
-      maestro-core:
-        specifier: workspace:*
-        version: link:../maestro-core
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

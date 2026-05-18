@@ -16,7 +16,7 @@
         "@ai-sdk/anthropic": "^3.0.71",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "ai": "^6.0.168",
-        "maestro-core": "workspace:*",
+        "@maestro/core": "workspace:*",
         "next": "^15.5.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",

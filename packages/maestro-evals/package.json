@@ -1,6 +1,6 @@
 {
-    "name": "maestro-evals",
-    "version": "0.1.0",
+    "name": "@maestro/evals",
+    "version": "1.0.0",
     "description": "Golden-prompt regression guard for the Maestro agent runtime. Static evals (mock-based, every CI) plus live evals (real Anthropic, scheduled) that catch the four Anthropic tool-calling traps before they ship.",
     "license": "Apache-2.0",
     "author": "Costa Software",
@@ -59,7 +59,7 @@
     "peerDependencies": {
         "@ai-sdk/anthropic": "^3.0.0",
         "ai": "^6.0.0",
-        "maestro-core": "^0.4.0",
+        "@maestro/core": "^1.0.0",
         "zod": "^3.25.0"
     },
     "peerDependenciesMeta": {
@@ -71,7 +71,7 @@
         "@ai-sdk/anthropic": "^3.0.71",
         "@types/node": "^22.10.0",
         "ai": "^6.0.0",
-        "maestro-core": "workspace:*",
+        "@maestro/core": "workspace:*",
         "typescript": "^5.7.2",
         "vitest": "^2.1.8",
         "zod": "^3.25.0"
