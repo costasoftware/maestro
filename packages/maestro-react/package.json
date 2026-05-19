@@ -1,6 +1,6 @@
 {
     "name": "maestro-react",
-    "version": "0.3.0-beta.0",
+    "version": "0.4.0-beta.0",
     "description": "React surface for the Maestro agent runtime. Ships the MaestroChatProtocol, a headless useMaestroChat hook with HTTP-SSE / AI-SDK / legacy-SSE transports, and a composed UI primitive set (ChatLauncher + ChatSheet + ChatPanel for bubble mode, ChatPanel standalone for page mode).",
     "license": "Apache-2.0",
     "author": "Costa Software",

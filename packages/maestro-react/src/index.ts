@@ -9,6 +9,7 @@ export {
     type ErrorEvent,
     MAESTRO_EVENT_TYPES,
     MAESTRO_PROTOCOL_VERSION,
+    type MaestroAttachment,
     type MaestroEvent,
     type MaestroEventType,
     type TextDeltaEvent,

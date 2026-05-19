@@ -235,6 +235,161 @@ describe('httpSSETransport', () => {
         })
     })
 
+    it('forwards send-time attachments to bodyBuilder as the third argument', async () => {
+        const seen: Array<{
+            messages: unknown
+            metadata: unknown
+            attachments: unknown
+        }> = []
+        const fetchImpl = (async (_url: string, _init: RequestInit) => {
+            return new Response(
+                sseStream([
+                    { data: JSON.stringify({ type: 'done' }) },
+                ]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = httpSSETransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+            bodyBuilder: (messages, metadata, attachments) => {
+                seen.push({ messages, metadata, attachments })
+                return { messages, metadata, attachments }
+            },
+        })
+
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            attachments: [
+                { kind: 'image', url: 'https://cdn/a.png' },
+            ],
+        })) {
+            // drain
+        }
+
+        expect(seen).toHaveLength(1)
+        expect(seen[0]!.attachments).toEqual([
+            { kind: 'image', url: 'https://cdn/a.png' },
+        ])
+    })
+
+    it('default body folds attachments in when no bodyBuilder is provided', async () => {
+        const calls: { url: string; init: RequestInit }[] = []
+        const fetchImpl = (async (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return new Response(
+                sseStream([
+                    { data: JSON.stringify({ type: 'done' }) },
+                ]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = httpSSETransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            attachments: [
+                {
+                    kind: 'image',
+                    url: 'https://cdn/a.png',
+                    mime: 'image/png',
+                    name: 'a.png',
+                    size: 1024,
+                },
+            ],
+        })) {
+            // drain
+        }
+        expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+            messages: [],
+            attachments: [
+                {
+                    kind: 'image',
+                    url: 'https://cdn/a.png',
+                    mime: 'image/png',
+                    name: 'a.png',
+                    size: 1024,
+                },
+            ],
+        })
+    })
+
+    it('default body folds both metadata + attachments when both supplied', async () => {
+        const calls: { url: string; init: RequestInit }[] = []
+        const fetchImpl = (async (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return new Response(
+                sseStream([
+                    { data: JSON.stringify({ type: 'done' }) },
+                ]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = httpSSETransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            metadata: { surface: 'admin' },
+            attachments: [{ kind: 'file', url: 'https://cdn/x.pdf' }],
+        })) {
+            // drain
+        }
+        expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+            messages: [],
+            metadata: { surface: 'admin' },
+            attachments: [{ kind: 'file', url: 'https://cdn/x.pdf' }],
+        })
+    })
+
+    it('default body omits attachments when none is supplied', async () => {
+        const calls: { url: string; init: RequestInit }[] = []
+        const fetchImpl = (async (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return new Response(
+                sseStream([
+                    { data: JSON.stringify({ type: 'done' }) },
+                ]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = httpSSETransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+        })) {
+            // drain
+        }
+        const body = JSON.parse(calls[0]!.init.body as string)
+        expect(body).toEqual({ messages: [] })
+        expect(body.attachments).toBeUndefined()
+    })
+
     it('stops yielding after a `done` event (no post-terminal leaks)', async () => {
         const fetchImpl = makeSseFetch([
             { data: JSON.stringify({ type: 'text-delta', delta: 'a' }) },

@@ -53,10 +53,13 @@ export interface AiSdkTransportOptions {
      * your own `MaestroMessage<TDataMap>[]` shape if you need it.
      *
      * Per-send `metadata` from `useMaestroChat#send(text, { metadata })`
-     * is reachable via `args.metadata`. The default body folds it in as
-     * a top-level `metadata` field when present; override this builder
-     * if your backend expects a different shape (e.g. AI SDK v6
-     * `messageMetadata` per-turn).
+     * is reachable via `args.metadata`. Per-send `attachments` (added
+     * in protocol 0.2.0-beta) is reachable via `args.attachments`. The
+     * default body folds both in as top-level fields when present;
+     * override this builder if your backend expects a different shape
+     * (e.g. AI SDK v6 `messageMetadata` per-turn, or attachments folded
+     * into the AI SDK `parts: [{ type: 'file', ... }]` per-message
+     * shape).
      */
     readonly bodyBuilder?: (args: AnySendArgs) => unknown
     /**
@@ -108,11 +111,7 @@ async function* iterate(
 
     const headers = await resolveHeaders(opts.headers)
     const body = JSON.stringify(
-        opts.bodyBuilder
-            ? opts.bodyBuilder(args)
-            : args.metadata !== undefined
-              ? { messages: args.messages, metadata: args.metadata }
-              : { messages: args.messages },
+        opts.bodyBuilder ? opts.bodyBuilder(args) : buildDefaultBody(args),
     )
 
     const response = await fetchImpl(opts.url, {
@@ -431,6 +430,18 @@ function translateDataChunk(
             value: chunk.data,
         },
     ]
+}
+
+/**
+ * Build the default POST body when no `bodyBuilder` is configured.
+ * Includes `metadata` / `attachments` only when present so backends
+ * that pre-date 0.2.0-beta don't see surprise fields on minimal sends.
+ */
+function buildDefaultBody(args: AnySendArgs): Record<string, unknown> {
+    const body: Record<string, unknown> = { messages: args.messages }
+    if (args.metadata !== undefined) body.metadata = args.metadata
+    if (args.attachments !== undefined) body.attachments = args.attachments
+    return body
 }
 
 async function resolveHeaders(

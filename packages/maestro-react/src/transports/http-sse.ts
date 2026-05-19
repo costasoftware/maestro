@@ -17,7 +17,7 @@
  *   data: {"type":"done"}\n\n
  */
 
-import type { MaestroEvent } from '../protocol.js'
+import type { MaestroAttachment, MaestroEvent } from '../protocol.js'
 import type { MaestroMessage } from '../message.js'
 import type { Transport, TransportSendArgs } from '../transport.js'
 import { parseSseStream } from './sse-parser.js'
@@ -46,10 +46,15 @@ export interface HttpSSETransportOptions<
      * `undefined` when the caller did not supply any. Folding it into
      * the wire body is the bodyBuilder's responsibility; the transport
      * never inspects it.
+     *
+     * `attachments` (added in protocol 0.2.0-beta) is the third
+     * argument, forwarded from `useMaestroChat#send(text, { attachments })`.
+     * It is `undefined` when the caller did not attach anything.
      */
     readonly bodyBuilder?: (
         messages: ReadonlyArray<MaestroMessage<TDataMap>>,
         metadata?: unknown,
+        attachments?: ReadonlyArray<MaestroAttachment>,
     ) => unknown
     /**
      * Override fetch — primarily for tests. Defaults to globalThis.fetch.
@@ -86,10 +91,12 @@ async function* iterate<TDataMap>(
     const headers = await resolveHeaders(opts.headers)
     const body = JSON.stringify(
         opts.bodyBuilder
-            ? opts.bodyBuilder(args.messages, args.metadata)
-            : args.metadata !== undefined
-              ? { messages: args.messages, metadata: args.metadata }
-              : { messages: args.messages },
+            ? opts.bodyBuilder(args.messages, args.metadata, args.attachments)
+            : buildDefaultBody(
+                  args.messages,
+                  args.metadata,
+                  args.attachments,
+              ),
     )
 
     const response = await fetchImpl(opts.url, {
@@ -156,6 +163,22 @@ async function* iterate<TDataMap>(
         // the reducer can transition the message to `complete`.
         yield { type: 'done' }
     }
+}
+
+/**
+ * Build the default POST body when no `bodyBuilder` is configured.
+ * Includes `metadata` / `attachments` only when present so backends
+ * that pre-date 0.2.0-beta don't see surprise fields on minimal sends.
+ */
+function buildDefaultBody<TDataMap>(
+    messages: ReadonlyArray<MaestroMessage<TDataMap>>,
+    metadata: unknown,
+    attachments: ReadonlyArray<MaestroAttachment> | undefined,
+): Record<string, unknown> {
+    const body: Record<string, unknown> = { messages }
+    if (metadata !== undefined) body.metadata = metadata
+    if (attachments !== undefined) body.attachments = attachments
+    return body
 }
 
 async function resolveHeaders(

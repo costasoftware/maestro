@@ -36,7 +36,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { MaestroError, MaestroMessage } from './message.js'
-import type { MaestroEvent } from './protocol.js'
+import type { MaestroAttachment, MaestroEvent } from './protocol.js'
 import type { Transport } from './transport.js'
 import {
     abortMessage,
@@ -63,7 +63,13 @@ export interface UseMaestroChatReturn<
     readonly messages: ReadonlyArray<MaestroMessage<TDataMap>>
     readonly isLoading: boolean
     readonly error: MaestroError | null
-    send(text: string, opts?: { metadata?: unknown }): Promise<void>
+    send(
+        text: string,
+        opts?: {
+            metadata?: unknown
+            attachments?: ReadonlyArray<MaestroAttachment>
+        },
+    ): Promise<void>
     abort(): void
     reset(): void
     append(message: MaestroMessage<TDataMap>): void
@@ -91,7 +97,10 @@ export interface UseMaestroChatReturn<
      * turn — `error` is cleared so the UI can show the fresh stream
      * cleanly.
      */
-    regenerate(opts?: { metadata?: unknown }): Promise<void>
+    regenerate(opts?: {
+        metadata?: unknown
+        attachments?: ReadonlyArray<MaestroAttachment>
+    }): Promise<void>
 }
 
 const defaultGenerateId = (): string =>
@@ -148,6 +157,7 @@ export function useMaestroChat<
             transportMessages: ReadonlyArray<MaestroMessage<TDataMap>>,
             assistantId: string,
             metadata: unknown,
+            attachments: ReadonlyArray<MaestroAttachment> | undefined,
         ): Promise<void> => {
             controllerRef.current?.abort()
             const controller = new AbortController()
@@ -161,6 +171,7 @@ export function useMaestroChat<
                     messages: transportMessages,
                     signal: controller.signal,
                     metadata,
+                    ...(attachments !== undefined ? { attachments } : {}),
                 })
                 for await (const event of iterable) {
                     if (controller.signal.aborted) break
@@ -206,14 +217,24 @@ export function useMaestroChat<
     const send = useCallback(
         async (
             text: string,
-            sendOpts?: { metadata?: unknown },
+            sendOpts?: {
+                metadata?: unknown
+                attachments?: ReadonlyArray<MaestroAttachment>
+            },
         ): Promise<void> => {
             const trimmed = text.trim()
-            if (trimmed.length === 0) return
+            // Allow empty text iff attachments are present — pure-media
+            // sends are legitimate (image-only chat turns). Without
+            // attachments, fall back to the prior empty-input guard.
+            const hasAttachments =
+                sendOpts?.attachments !== undefined &&
+                sendOpts.attachments.length > 0
+            if (trimmed.length === 0 && !hasAttachments) return
 
             const userMessage = createUserMessage<TDataMap>({
                 id: generateId(),
                 text: trimmed,
+                attachments: sendOpts?.attachments,
             })
             const assistantId = generateId()
             const assistantMessage = createAssistantMessage<TDataMap>({
@@ -232,7 +253,12 @@ export function useMaestroChat<
             // transport sees — it's still pending, no point sending it.
             const transportMessages = snapshot.slice(0, -1)
 
-            await runStream(transportMessages, assistantId, sendOpts?.metadata)
+            await runStream(
+                transportMessages,
+                assistantId,
+                sendOpts?.metadata,
+                sendOpts?.attachments,
+            )
         },
         [generateId, runStream],
     )
@@ -301,7 +327,10 @@ export function useMaestroChat<
     }, [messages])
 
     const regenerate = useCallback(
-        async (regenOpts?: { metadata?: unknown }): Promise<void> => {
+        async (regenOpts?: {
+            metadata?: unknown
+            attachments?: ReadonlyArray<MaestroAttachment>
+        }): Promise<void> => {
             const current = messagesRef.current
             const lastUserIdx = findLastIndex(
                 current,
@@ -327,10 +356,21 @@ export function useMaestroChat<
             // assistant turn.
             setMessagesState(nextMessages)
 
+            // Re-use the trailing user turn's attachments by default so
+            // a retry sends the same payload to the backend. Callers can
+            // override via `regenOpts.attachments` (e.g. to drop a
+            // failed-to-upload file before retrying).
+            const trailingUser = current[lastUserIdx]
+            const attachments =
+                regenOpts && 'attachments' in regenOpts
+                    ? regenOpts.attachments
+                    : trailingUser?.attachments
+
             await runStream(
                 transportMessages,
                 assistantId,
                 regenOpts?.metadata,
+                attachments,
             )
         },
         [generateId, runStream],

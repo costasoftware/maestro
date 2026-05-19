@@ -19,6 +19,7 @@
 import type {
     CitationEvent,
     ErrorEvent,
+    MaestroAttachment,
     ToolProgressEvent,
     ToolResultEvent,
 } from './protocol.js'
@@ -112,6 +113,19 @@ export interface MaestroMessage<
     readonly completedAt?: number
     readonly error?: MaestroError
     readonly metadata?: unknown
+    /**
+     * User-attached media for this turn. Stamped at `send()` time from
+     * `send(text, { attachments: [...] })`; never derived from events.
+     *
+     * Only meaningful on `role: 'user'` messages — assistant turns will
+     * always leave this `undefined`. The field is typed on the union to
+     * keep renderer code uniform (a single `message.attachments?.map(...)`
+     * branch works for either role).
+     *
+     * Added in protocol 0.2.0-beta. See `MaestroAttachment` in
+     * `./protocol.ts` for the shape and lifecycle.
+     */
+    readonly attachments?: ReadonlyArray<MaestroAttachment>
 }
 
 /**

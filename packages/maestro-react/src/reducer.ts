@@ -23,6 +23,7 @@ import {
     type DataEvent,
     type DoneEvent,
     type ErrorEvent,
+    type MaestroAttachment,
     type MaestroEvent,
     type TextDeltaEvent,
     type ToolCallEvent,
@@ -53,9 +54,19 @@ export function createAssistantMessage<
 /**
  * Build a user message. Always lands in `complete` state — there is
  * no streaming for user input.
+ *
+ * `attachments` (added in protocol 0.2.0-beta) is stamped verbatim
+ * onto the message so renderers can preview user-attached media
+ * alongside the text. It is `undefined` when the caller did not
+ * attach anything.
  */
 export function createUserMessage<TDataMap>(
-    args: { id: string; text: string; createdAt?: number },
+    args: {
+        id: string
+        text: string
+        createdAt?: number
+        attachments?: ReadonlyArray<MaestroAttachment>
+    },
 ): MaestroMessage<TDataMap> {
     const now = args.createdAt ?? Date.now()
     return {
@@ -68,6 +79,9 @@ export function createUserMessage<TDataMap>(
         status: 'complete',
         createdAt: now,
         completedAt: now,
+        ...(args.attachments !== undefined
+            ? { attachments: args.attachments }
+            : {}),
     }
 }
 

@@ -1,7 +1,11 @@
 # MaestroChatProtocol
 
-**Version:** `0.1.0-beta`
+**Version:** `0.2.0-beta`
 **Status:** unlocked. The shape is locked only after a non-TypeScript backend (trading-rag, FastAPI) implements it natively as part of P4. Until then, additions are permitted; renames/removals are not.
+
+**Changelog:**
+- `0.2.0-beta` — adds `attachments` to user messages + the request body (closes GAP-1 surfaced by trading-rag P4 adoption: no protocol slot for user-attached media). See [User attachments](#user-attachments). Additive: backends and clients that pre-date 0.2 keep working unchanged.
+- `0.1.0-beta` — initial published shape (8 events, single-`done` per POST).
 
 A wire-format-neutral event vocabulary for streaming chat surfaces backed by LLMs. The protocol exists so that a single React chat client can render conversations produced by any compatible backend — whether that backend uses the Vercel AI SDK v6 wire format, custom Node SSE, or custom FastAPI SSE — without per-consumer event mapping in the UI layer.
 
@@ -178,6 +182,68 @@ For app-specific events, emit a `data` event with a namespaced `key`. Examples:
 
 ---
 
+## User attachments
+
+Added in `0.2.0-beta`. Closes GAP-1 surfaced by trading-rag P4 adoption: prior to this, consumers with media uploads (image previews, file drops) kept a side-channel `Map<userMessageId, previewUrl>` because the protocol had no slot for non-text user inputs. Every consumer with media would have reinvented that workaround.
+
+### Shape
+
+```json
+{
+    "kind": "image",
+    "url": "https://cdn.example.com/uploads/abc123.png",
+    "mime": "image/png",
+    "name": "screenshot.png",
+    "size": 4096
+}
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `kind` | yes | Categoric kind. Open string. Common values: `image`, `file`, `video`, `audio`. Renderers SHOULD treat unknown kinds as `file`. |
+| `url` | yes | Where the content lives. Durable handle returned by the upload step. Backends SHOULD validate against an allowed-origins list before fetching. |
+| `mime` | no | MIME type hint. Backend MAY infer from URL / bytes. |
+| `name` | no | Display name for the renderer (typically the original filename). |
+| `size` | no | Byte count. Useful for previews and quota checks. |
+
+### Lifecycle
+
+1. **Upload first.** Attachments are uploaded out-of-band BEFORE the user message is sent — the protocol does NOT specify the upload mechanism (multipart POST to a presigned URL, signed S3 PUT, app-specific endpoint, etc.). The upload returns a durable URL.
+2. **Send the URL.** The client passes the resolved attachments into `send(text, { attachments: [...] })`. The URL is the wire-level handle; raw bytes never travel inside the protocol's request body.
+3. **Stamp + transport.** The TS hook stamps the attachments onto the user `MaestroMessage` (so renderers can preview them) AND forwards them as `attachments` in the POST body.
+
+### Request body
+
+Default transport bodies fold attachments alongside `messages`:
+
+```json
+{
+    "messages": [
+        {
+            "id": "msg_1",
+            "role": "user",
+            "text": "describe this",
+            "attachments": [
+                { "kind": "image", "url": "https://cdn/x.png" }
+            ]
+        }
+    ],
+    "attachments": [
+        { "kind": "image", "url": "https://cdn/x.png" }
+    ]
+}
+```
+
+The top-level `attachments` field MIRRORS the trailing user message's `attachments` for backends that don't want to walk `messages` looking for the latest turn. Backends SHOULD prefer the top-level field as the authoritative payload for the in-flight turn.
+
+Backends with custom body shapes can fold attachments wherever they expect them (e.g. AI SDK v6 `parts: [{ type: 'file', ... }]` per-message) via the transport's `bodyBuilder` hook.
+
+### Backwards compatibility
+
+Adding `attachments` is additive. Pre-0.2 clients omit the field; pre-0.2 backends ignore the unrecognised key. Consumers MUST NOT assume attachments are always present.
+
+---
+
 ## Versioning policy
 
 Semantic versioning, with `0.1.0-beta` as the first published shape.
@@ -186,6 +252,7 @@ Semantic versioning, with `0.1.0-beta` as the first published shape.
 | --- | --- |
 | Add a new event type | minor |
 | Add an OPTIONAL field to an existing event | minor |
+| Add an OPTIONAL field to an existing message type (e.g. `MaestroMessage.attachments` in 0.2.0-beta) | minor |
 | Rename a field | major |
 | Remove a field | major |
 | Change a field's type | major |
@@ -215,7 +282,7 @@ For Python backends (e.g. FastAPI + `sse-starlette`). Drop-in helper using Pydan
 
 ```python
 # maestro_chat_protocol.py
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import Annotated, Any, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
 from sse_starlette import EventSourceResponse
 
@@ -283,6 +350,40 @@ class Done(BaseModel):
     metadata: Optional[Any] = None
 
 
+# v0.2.0-beta: user-attached media. See "User attachments" above.
+class MaestroAttachment(BaseModel):
+    kind: str  # 'image' | 'file' | 'video' | 'audio' | open string
+    url: str
+    mime: Optional[str] = None
+    name: Optional[str] = None
+    size: Optional[int] = None
+
+
+class MaestroMessageIn(BaseModel):
+    """Inbound user message shape (per-turn). Mirrors the TS
+    `MaestroMessage` fields the server actually reads — the client
+    sends much more, but the backend usually only needs id/role/text
+    plus the new `attachments` field."""
+
+    id: str
+    role: Literal["user", "assistant"]
+    text: str
+    attachments: Optional[List[MaestroAttachment]] = None
+
+
+class MaestroChatRequest(BaseModel):
+    """Default request envelope produced by the TS transports.
+
+    `attachments` at the top level MIRRORS the trailing user message's
+    `attachments` field. Backends SHOULD prefer the top-level field as
+    the authoritative payload for the in-flight turn (one place to look,
+    no walking the history array)."""
+
+    messages: List[MaestroMessageIn]
+    metadata: Optional[Any] = None
+    attachments: Optional[List[MaestroAttachment]] = None
+
+
 MaestroEvent = Annotated[
     Union[TextDelta, ToolCall, ToolProgress, ToolResult, Citation, Data, Error, Done],
     Field(discriminator="type"),
@@ -299,19 +400,23 @@ def _send_event(event: BaseModel) -> dict[str, str]:
 
 # Example usage inside a FastAPI route:
 #
-# async def stream():
-#     yield _send_event(TextDelta(delta="hello "))
-#     yield _send_event(
-#         ToolCall(callId="c1", name="search", input={"q": "x"})
-#     )
-#     yield _send_event(
-#         ToolResult(callId="c1", result={"hits": 3})
-#     )
-#     yield _send_event(TextDelta(delta="found 3."))
-#     yield _send_event(Done(metadata={"model": "claude-opus-4-7"}))
-#
 # @app.post("/chat")
-# def chat():
+# def chat(req: MaestroChatRequest):
+#     # v0.2 — process attachments alongside text.
+#     for a in req.attachments or []:
+#         validate_origin(a.url)  # SHOULD validate before fetch
+#
+#     async def stream():
+#         yield _send_event(TextDelta(delta="hello "))
+#         yield _send_event(
+#             ToolCall(callId="c1", name="search", input={"q": "x"})
+#         )
+#         yield _send_event(
+#             ToolResult(callId="c1", result={"hits": 3})
+#         )
+#         yield _send_event(TextDelta(delta="found 3."))
+#         yield _send_event(Done(metadata={"model": "claude-opus-4-7"}))
+#
 #     return EventSourceResponse(stream())
 ```
 

@@ -10,7 +10,7 @@
  * lets backends adopt new ones without touching the hook.
  */
 
-import type { MaestroEvent } from './protocol.js'
+import type { MaestroAttachment, MaestroEvent } from './protocol.js'
 import type { MaestroMessage } from './message.js'
 
 export interface TransportSendArgs<
@@ -43,6 +43,21 @@ export interface TransportSendArgs<
      * feature flags, idempotency keys).
      */
     readonly metadata?: unknown
+    /**
+     * User-attached media for the turn being sent. Forwarded verbatim
+     * from `useMaestroChat#send(text, { attachments })`. The hook also
+     * stamps the same array onto the trailing user `MaestroMessage` so
+     * UIs can render previews without inspecting transport args.
+     *
+     * Default transport `bodyBuilder`s fold `attachments` into the POST
+     * body as a top-level `attachments` field when present; custom
+     * builders receive it as the second argument (`httpSSETransport`)
+     * or on `args.attachments` (`aiSdkTransport` / `legacySseTransport`).
+     *
+     * Added in protocol 0.2.0-beta. See `MaestroAttachment` in
+     * `./protocol.ts`.
+     */
+    readonly attachments?: ReadonlyArray<MaestroAttachment>
 }
 
 export interface Transport<

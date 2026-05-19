@@ -8,6 +8,7 @@ import {
     type ErrorEvent,
     MAESTRO_EVENT_TYPES,
     MAESTRO_PROTOCOL_VERSION,
+    type MaestroAttachment,
     type MaestroEvent,
     type MaestroEventType,
     type TextDeltaEvent,
@@ -191,6 +192,59 @@ describe('MaestroChatProtocol — discriminator + exhaustiveness', () => {
     })
 
     it('exposes a version constant', () => {
-        expect(MAESTRO_PROTOCOL_VERSION).toBe('0.1.0-beta')
+        expect(MAESTRO_PROTOCOL_VERSION).toBe('0.2.0-beta')
+    })
+})
+
+describe('MaestroChatProtocol — attachments (v0.2)', () => {
+    it('minimal attachment requires kind + url', () => {
+        const a: MaestroAttachment = {
+            kind: 'image',
+            url: 'https://cdn.example.com/u/abc.png',
+        }
+        expect(a.kind).toBe('image')
+        expect(a.url).toBe('https://cdn.example.com/u/abc.png')
+        // Optional fields are absent on a minimal attachment.
+        expect(a.mime).toBeUndefined()
+        expect(a.name).toBeUndefined()
+        expect(a.size).toBeUndefined()
+    })
+
+    it('full attachment carries mime, name, size', () => {
+        const a: MaestroAttachment = {
+            kind: 'file',
+            url: 'https://cdn.example.com/u/spec.pdf',
+            mime: 'application/pdf',
+            name: 'spec.pdf',
+            size: 18_432,
+        }
+        expect(a.mime).toBe('application/pdf')
+        expect(a.name).toBe('spec.pdf')
+        expect(a.size).toBe(18_432)
+    })
+
+    it('kind is an open string — common values pass type-check', () => {
+        const values: MaestroAttachment['kind'][] = [
+            'image',
+            'file',
+            'video',
+            'audio',
+            'application/x-custom',
+        ]
+        // Smoke check — the assertion below exists only so the loop is
+        // observed at runtime. Type-checking is the real test.
+        expect(values).toHaveLength(5)
+    })
+
+    it('survives JSON round-trip with no field loss', () => {
+        const original: MaestroAttachment = {
+            kind: 'image',
+            url: 'https://cdn.example.com/u/abc.png',
+            mime: 'image/png',
+            name: 'screenshot.png',
+            size: 4096,
+        }
+        const round = JSON.parse(JSON.stringify(original)) as MaestroAttachment
+        expect(round).toEqual(original)
     })
 })
