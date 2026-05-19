@@ -206,6 +206,110 @@ describe('aiSdkTransport — metadata forwarding', () => {
     })
 })
 
+describe('aiSdkTransport — attachments forwarding (v0.2)', () => {
+    it('exposes attachments to bodyBuilder via args.attachments', async () => {
+        const seen: unknown[] = []
+        const fetchImpl = (async () =>
+            new Response(
+                sseStream([{ data: JSON.stringify({ type: 'finish' }) }]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )) as unknown as typeof fetch
+
+        const transport = aiSdkTransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+            bodyBuilder: args => {
+                seen.push(args.attachments)
+                return {
+                    messages: args.messages,
+                    attachments: args.attachments,
+                }
+            },
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            attachments: [
+                { kind: 'image', url: 'https://cdn/a.png' },
+            ],
+        })) {
+            // drain
+        }
+        expect(seen).toEqual([
+            [{ kind: 'image', url: 'https://cdn/a.png' }],
+        ])
+    })
+
+    it('default body folds attachments in when no bodyBuilder is provided', async () => {
+        const calls: { url: string; init: RequestInit }[] = []
+        const fetchImpl = (async (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return new Response(
+                sseStream([{ data: JSON.stringify({ type: 'finish' }) }]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = aiSdkTransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            attachments: [
+                { kind: 'file', url: 'https://cdn/spec.pdf', name: 'spec.pdf' },
+            ],
+        })) {
+            // drain
+        }
+        expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+            messages: [],
+            attachments: [
+                { kind: 'file', url: 'https://cdn/spec.pdf', name: 'spec.pdf' },
+            ],
+        })
+    })
+
+    it('default body folds metadata + attachments together', async () => {
+        const calls: { url: string; init: RequestInit }[] = []
+        const fetchImpl = (async (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return new Response(
+                sseStream([{ data: JSON.stringify({ type: 'finish' }) }]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = aiSdkTransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            metadata: { idempotencyKey: 'k1' },
+            attachments: [{ kind: 'image', url: 'https://cdn/a.png' }],
+        })) {
+            // drain
+        }
+        expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+            messages: [],
+            metadata: { idempotencyKey: 'k1' },
+            attachments: [{ kind: 'image', url: 'https://cdn/a.png' }],
+        })
+    })
+})
+
 describe('aiSdkTransport — stream-level errors', () => {
     it('error chunk emits a MaestroEvent error and closes', async () => {
         const out = await run(AI_SDK_STREAM_ERROR_FLOW)

@@ -2,7 +2,7 @@
  * MaestroChatProtocol — wire-format-neutral event vocabulary for chat
  * surfaces built on top of streaming LLM backends.
  *
- * Version: 0.1.0-beta. The shape is locked only after a non-TypeScript
+ * Version: 0.2.0-beta. The shape is locked only after a non-TypeScript
  * backend (trading-rag, FastAPI) implements it natively as part of P4.
  * Until then, additions are permitted; renames/removals are not.
  *
@@ -207,12 +207,54 @@ export const MAESTRO_EVENT_TYPES = [
 export type MaestroEventType = (typeof MAESTRO_EVENT_TYPES)[number]
 
 /**
+ * User-attached media for a single user message. Surfaced to the
+ * `MaestroMessage` aggregate via `attachments?` and forwarded over the
+ * wire as a top-level `attachments` field on the POST body.
+ *
+ * Lifecycle: attachments are uploaded out-of-band BEFORE `send()` is
+ * called — the caller's upload code returns a durable URL, then passes
+ * that URL into `send(text, { attachments: [...] })`. The protocol
+ * itself does not specify the upload mechanism.
+ *
+ * Backends receive attachments alongside `messages` in the request body
+ * (default transport bodies; custom `bodyBuilder`s receive them as a
+ * parameter / on `args.attachments`). Backends SHOULD validate the URL
+ * against an allowed-origins list before fetching.
+ *
+ * Added in protocol 0.2.0-beta. Closes GAP-1 surfaced by trading-rag P4
+ * adoption: prior to this field, consumers with media uploads kept a
+ * side-channel `Map<userMessageId, previewUrl>` because there was no
+ * protocol slot for non-text user inputs.
+ */
+export interface MaestroAttachment {
+    /**
+     * Categoric kind. Open string — common values are `'image'`,
+     * `'file'`, `'video'`, `'audio'`. Renderers SHOULD treat unknown
+     * kinds as `'file'`.
+     */
+    readonly kind: string
+    /**
+     * Where the content lives. Required. Backends typically receive
+     * this AFTER an upload step; the URL is the durable handle.
+     */
+    readonly url: string
+    /** MIME type hint. Optional — backend MAY infer from URL / bytes. */
+    readonly mime?: string
+    /** Display name for the renderer (e.g. original filename). */
+    readonly name?: string
+    /** Byte count. Optional — useful for previews and quota checks. */
+    readonly size?: number
+}
+
+/**
  * Protocol version. Bumped per the policy in `MAESTRO_CHAT_PROTOCOL.md`:
  *   - additive event-type additions  → minor bump
+ *   - additive optional fields on existing
+ *     events / messages              → minor bump
  *   - removals / renames / breaking
  *     schema changes within an event → major bump
  */
-export const MAESTRO_PROTOCOL_VERSION = '0.1.0-beta' as const
+export const MAESTRO_PROTOCOL_VERSION = '0.2.0-beta' as const
 
 /**
  * Exhaustiveness helper. Use in the `default:` branch of a switch

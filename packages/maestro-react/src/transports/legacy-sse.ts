@@ -65,8 +65,9 @@ export interface LegacySseTransportOptions<
      * trading-rag's `{ message, conversation_id }`) override this.
      *
      * Per-send `metadata` from `useMaestroChat#send(text, { metadata })`
-     * is reachable via `args.metadata`. The default body folds it in as
-     * a top-level `metadata` field when present.
+     * is reachable via `args.metadata`. Per-send `attachments` (added
+     * in protocol 0.2.0-beta) is reachable via `args.attachments`. The
+     * default body folds both in as top-level fields when present.
      */
     readonly bodyBuilder?: (args: TransportSendArgs<TDataMap>) => unknown
     readonly fetch?: typeof fetch
@@ -108,11 +109,7 @@ async function* iterate<TDataMap>(
 
     const headers = await resolveHeaders(opts.headers)
     const body = JSON.stringify(
-        opts.bodyBuilder
-            ? opts.bodyBuilder(args)
-            : args.metadata !== undefined
-              ? { messages: args.messages, metadata: args.metadata }
-              : { messages: args.messages },
+        opts.bodyBuilder ? opts.bodyBuilder(args) : buildDefaultBody(args),
     )
 
     const response = await fetchImpl(opts.url, {
@@ -206,6 +203,20 @@ async function* iterate<TDataMap>(
     if (!sawTerminal) {
         yield { type: 'done' }
     }
+}
+
+/**
+ * Build the default POST body when no `bodyBuilder` is configured.
+ * Includes `metadata` / `attachments` only when present so backends
+ * that pre-date 0.2.0-beta don't see surprise fields on minimal sends.
+ */
+function buildDefaultBody<TDataMap>(
+    args: TransportSendArgs<TDataMap>,
+): Record<string, unknown> {
+    const body: Record<string, unknown> = { messages: args.messages }
+    if (args.metadata !== undefined) body.metadata = args.metadata
+    if (args.attachments !== undefined) body.attachments = args.attachments
+    return body
 }
 
 async function resolveHeaders(

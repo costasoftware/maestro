@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { MaestroMessage } from './message.js'
-import type { MaestroEvent } from './protocol.js'
+import type { MaestroAttachment, MaestroEvent } from './protocol.js'
 import type { Transport } from './transport.js'
 import { useMaestroChat } from './hook.js'
 
@@ -20,6 +20,7 @@ function makeControlledTransport(): {
     reset(): void
     sentMessages(): ReadonlyArray<MaestroMessage<DataMap>>
     sentMetadata(): unknown
+    sentAttachments(): ReadonlyArray<MaestroAttachment> | undefined
     sendCount(): number
     lastSignal(): AbortSignal | null
 } {
@@ -28,6 +29,8 @@ function makeControlledTransport(): {
     let done = false
     let captured: ReadonlyArray<MaestroMessage<DataMap>> = []
     let capturedMetadata: unknown = undefined
+    let capturedAttachments: ReadonlyArray<MaestroAttachment> | undefined =
+        undefined
     let sendCalls = 0
     let lastSignal: AbortSignal | null = null
 
@@ -46,10 +49,11 @@ function makeControlledTransport(): {
     }
 
     const transport: Transport<DataMap> = {
-        send({ messages, signal, metadata }) {
+        send({ messages, signal, metadata, attachments }) {
             sendCalls += 1
             captured = messages
             capturedMetadata = metadata
+            capturedAttachments = attachments
             lastSignal = signal
             // Each `send` resets the iterator queue + done flag so the
             // hook's second invocation (e.g. via `regenerate`) doesn't
@@ -90,6 +94,7 @@ function makeControlledTransport(): {
         },
         sentMessages: () => captured,
         sentMetadata: () => capturedMetadata,
+        sentAttachments: () => capturedAttachments,
         sendCount: () => sendCalls,
         lastSignal: () => lastSignal,
     }
@@ -589,6 +594,182 @@ describe('useMaestroChat — regenerate', () => {
         expect(ctl.sentMetadata()).toEqual({
             reason: 'retry-after-rate-limit',
         })
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+})
+
+describe('useMaestroChat — send attachments forwarding (v0.2)', () => {
+    const image: MaestroAttachment = {
+        kind: 'image',
+        url: 'https://cdn.example.com/u/abc.png',
+        mime: 'image/png',
+        name: 'screenshot.png',
+        size: 4096,
+    }
+
+    it('stamps attachments onto the user message at send time', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('look at this', { attachments: [image] })
+            await Promise.resolve()
+        })
+
+        const userMsg = result.current.messages[0]
+        expect(userMsg?.role).toBe('user')
+        expect(userMsg?.text).toBe('look at this')
+        expect(userMsg?.attachments).toEqual([image])
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+
+    it('forwards attachments to transport.send via args.attachments', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('here', { attachments: [image] })
+            await Promise.resolve()
+        })
+
+        expect(ctl.sentAttachments()).toEqual([image])
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+
+    it('omits attachments on the user message + transport args when none supplied', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('plain text')
+            await Promise.resolve()
+        })
+
+        expect(result.current.messages[0]?.attachments).toBeUndefined()
+        expect(ctl.sentAttachments()).toBeUndefined()
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+
+    it('allows a pure-media send (empty text + attachments) — does NOT short-circuit', async () => {
+        const ctl = makeControlledTransport()
+        const sendSpy = vi.spyOn(ctl.transport, 'send')
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('', { attachments: [image] })
+            await Promise.resolve()
+        })
+
+        expect(sendSpy).toHaveBeenCalledTimes(1)
+        expect(result.current.messages).toHaveLength(2)
+        expect(result.current.messages[0]?.attachments).toEqual([image])
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+
+    it('still short-circuits when text is empty AND no attachments', async () => {
+        const ctl = makeControlledTransport()
+        const sendSpy = vi.spyOn(ctl.transport, 'send')
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            await result.current.send('   ', { attachments: [] })
+        })
+
+        expect(sendSpy).not.toHaveBeenCalled()
+        expect(result.current.messages).toHaveLength(0)
+    })
+
+    it('regenerate re-uses the trailing user message attachments by default', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('please describe', {
+                attachments: [image],
+            })
+        })
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false)
+        })
+
+        await act(async () => {
+            void result.current.regenerate()
+            await Promise.resolve()
+        })
+
+        // Regenerate forwards the original attachments to the new
+        // transport call without the caller having to thread them.
+        expect(ctl.sentAttachments()).toEqual([image])
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+
+    it('regenerate caller can override / clear attachments explicitly', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('please describe', {
+                attachments: [image],
+            })
+        })
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false)
+        })
+
+        await act(async () => {
+            void result.current.regenerate({ attachments: [] })
+            await Promise.resolve()
+        })
+
+        // Explicit empty array overrides the trailing user's
+        // attachments — caller chose to retry without media.
+        expect(ctl.sentAttachments()).toEqual([])
 
         await act(async () => {
             await ctl.push({ type: 'done' })

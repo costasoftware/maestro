@@ -4,14 +4,15 @@ React surface for the [Maestro](https://github.com/costasoftware/maestro) agent 
 
 ## Status
 
-`0.3.0-beta` — additive release. Closes three API gaps surfaced by barbeiro's adoption (`barbeiro-app#403`): `send(text, { metadata })` now actually reaches the transport, `setMessages` rehydrates a saved thread without aborting in-flight streams, and `regenerate()` re-runs the last user turn without the `reset() + N×append()` dance. Protocol unchanged (`0.1.0-beta`); no breaking changes from `0.2.0-beta`.
+`0.4.0-beta` — additive release. Bumps `MaestroChatProtocol` to `0.2.0-beta` and closes GAP-1 surfaced by trading-rag's P4 adoption (`Alfredao/trading-rag#1`): the protocol now has a first-class slot for user-attached media. `send(text, { attachments: [...] })` stamps the attachments onto the user `MaestroMessage` AND forwards them to the transport — replacing the side-channel `Map<userMessageId, previewUrl>` workaround consumers were inventing per app. See [Sending attachments](#sending-attachments).
 
 | Phase | Ships |
 | --- | --- |
 | P1 | `MaestroChatProtocol` types + `MAESTRO_CHAT_PROTOCOL.md` spec |
 | P2 | `useMaestroChat()` hook + headless reducer + 3 transports (`httpSSETransport`, `aiSdkTransport`, `legacySseTransport`) |
 | P3 | Composed UI primitives — `<ChatLauncher>` + `<ChatSheet>` + `<ChatPanel>` shell trio, plus building blocks (`<MessageList>`, `<MessageBubble>`, `<ChatInput>`, `<ToolCallCard>`, `<CitationCard>`). Pure CSS theming via custom properties; optional Tailwind preset. |
-| **P3.1 (this release)** | `send(text, { metadata })` end-to-end, `setMessages` rehydration primitive, `regenerate()` last-user-turn replay. |
+| P3.1 | `send(text, { metadata })` end-to-end, `setMessages` rehydration primitive, `regenerate()` last-user-turn replay. |
+| **P3.2 (this release)** | Protocol `0.2.0-beta`: `MaestroAttachment` + `send(text, { attachments })` end-to-end, stamped on user messages and folded into the request body. |
 | P4 | Trading-rag native (FastAPI) adoption — validates the protocol against a non-TS implementation |
 
 ## Install
@@ -144,6 +145,73 @@ return (
 ```
 
 Like `send()`, `regenerate()` aborts any in-flight stream before starting the new one — two simultaneous streams would race. The new run uses a fresh `AbortController`.
+
+### Sending attachments
+
+`send(text, { attachments })` lands in `0.4.0-beta.0` (protocol `0.2.0-beta`). Attachments are uploaded out-of-band BEFORE you call `send` — the protocol does not specify the upload mechanism; pass the resulting durable URL into the `attachments` array. The hook stamps the attachments onto the user `MaestroMessage` (renderers can preview them via `message.attachments`) AND forwards them to the transport, which folds them into the POST body.
+
+```tsx
+import {
+    useMaestroChat,
+    httpSSETransport,
+    type MaestroAttachment,
+} from 'maestro-react'
+
+async function uploadAndSend(file: File, prompt: string) {
+    // 1. Upload bytes out-of-band — the protocol does not specify how.
+    const uploaded = await uploadToYourBucket(file) // { url, mime, size }
+
+    const attachment: MaestroAttachment = {
+        kind: 'image',
+        url: uploaded.url,
+        mime: uploaded.mime,
+        name: file.name,
+        size: uploaded.size,
+    }
+
+    // 2. Send text + attachment in one call. The hook stamps the
+    //    attachment onto the user MaestroMessage AND forwards it to
+    //    the transport.
+    await chat.send(prompt, { attachments: [attachment] })
+}
+
+// 3. Render previews from the user message.
+{messages.map(m => (
+    <div key={m.id}>
+        {m.text}
+        {m.attachments?.map(a => (
+            <img key={a.url} src={a.url} alt={a.name ?? ''} />
+        ))}
+    </div>
+))}
+```
+
+`MaestroAttachment` shape:
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `kind` | yes | Open string. Common values: `'image'`, `'file'`, `'video'`, `'audio'`. |
+| `url` | yes | Durable handle returned by the upload step. |
+| `mime` | no | MIME type hint. Backend MAY infer. |
+| `name` | no | Display name. |
+| `size` | no | Byte count. |
+
+Empty-text sends are permitted when `attachments` is non-empty — a pure-media turn (e.g. "here's an image, what is this?" with no caption) is a valid use case. The `text.trim().length === 0` short-circuit only fires when there are also no attachments.
+
+Default request body produced by all three transports (`httpSSETransport`, `aiSdkTransport`, `legacySseTransport`):
+
+```json
+{
+    "messages": [
+        { "id": "msg_1", "role": "user", "text": "describe this", "attachments": [...] }
+    ],
+    "attachments": [...]
+}
+```
+
+The top-level `attachments` mirrors the trailing user message's attachments. Backends SHOULD prefer the top-level field as the authoritative payload for the in-flight turn (one place to look, no walking `messages`). Custom `bodyBuilder`s receive `attachments` as a parameter (`httpSSETransport`'s third argument) or on `args.attachments` (`aiSdkTransport` / `legacySseTransport`) so you can re-shape into any format your backend expects (e.g. AI SDK v6 `parts: [{ type: 'file', ... }]` per-message).
+
+`regenerate()` re-uses the trailing user message's attachments by default. Pass `regenerate({ attachments: [] })` to retry without media (useful when an upload failed and the user wants to drop it).
 
 ## Transports
 
@@ -348,7 +416,7 @@ When the composed shells aren't enough, the underlying primitives are exported i
 
 See [`src/protocol.ts`](./src/protocol.ts) for the TS union (authoritative for TS consumers) and the repo-root [`MAESTRO_CHAT_PROTOCOL.md`](../../MAESTRO_CHAT_PROTOCOL.md) for the language-neutral spec + Python reference helper.
 
-Protocol version: `0.1.0-beta`. Locked after P4 (trading-rag native adoption) validates it against a non-TS implementation. Additive event additions ship as minor bumps; renames/removals are major.
+Protocol version: `0.2.0-beta`. Locked after P4 (trading-rag native adoption) validates it against a non-TS implementation. Additive event additions ship as minor bumps; renames/removals are major. `0.2.0-beta` added the `attachments` field on user messages — see [`MAESTRO_CHAT_PROTOCOL.md` § User attachments](../../MAESTRO_CHAT_PROTOCOL.md#user-attachments).
 
 ## License
 
