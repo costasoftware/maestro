@@ -4,9 +4,10 @@ In-process tool-calling agent runtime for SaaS products. Model-agnostic, transpo
 
 ## What ships
 
-### `0.2.0` (current)
+### `1.1.0` (current)
 
 - **`runChatTurn`** — one call replaces ~300 LoC of stream orchestration. Pre-call quota gate, model selection, AI SDK tool building, prompt-cache breakpoints, memory injection, turn-row persistence, post-call accounting, SSE response. Lives at `maestro-core/runtime`.
+- **`runOneShotTurn`** — single-shot `generateText` counterpart for non-streaming channels (WhatsApp, SMS, email, batch eval). Same ports, same trap-guards, returns a typed `RunOneShotTurnResult` instead of a `Response`. Lives at `maestro-core/runtime`.
 - Quota gate: `AiQuotaDeniedError`, `enforceQuotaOrThrow`, `checkAndEnforce`
 - Memory load + format: `loadMemoryBlock`, `formatMemoryBlock`
 - Empty-recovery decision: `decideEmptyRecovery`
@@ -116,6 +117,70 @@ export async function POST(req: Request) {
     }
 }
 ```
+
+## Single-shot turns (`runOneShotTurn`)
+
+`runChatTurn` returns an SSE stream. Some channels can't consume one:
+
+- **WhatsApp / SMS bots** — the provider expects one POST body per outbound message.
+- **Email auto-responders** — the body is finalised before send; nothing to stream into.
+- **Batch evals / cron summarisers** — there is no user UI; the harness wants the full text + tool history at once.
+
+For these, `runOneShotTurn` is the same kernel call wrapped around `generateText` instead of `streamText`. Same ports, same trap-guards, same model selection / quota / memory / cache / turn-row / telemetry machinery — different shape on the way out:
+
+```ts
+import { runOneShotTurn, AiQuotaDeniedError } from 'maestro-core/runtime'
+
+const result = await runOneShotTurn({
+    threadId,
+    ctx, // BaseToolContext — same shape as runChatTurn
+    messages, // UIMessage[] from your transport's history
+    tools: [lookupTool /* ... */],
+    systemPrompt: {
+        static: 'You are a helpful WhatsApp assistant.',
+        dynamic: undefined,
+    },
+    models: {
+        fast: 'claude-haiku-4-5-20251001',
+        smart: 'claude-sonnet-4-6',
+    },
+    // Bound output length — keep SMS / WhatsApp turns short.
+    maxOutputTokens: 600,
+    // Same recovery semantics as runChatTurn; enforce mode fires a
+    // second generateText call when triggered (no writer to inject into).
+    emptyRecoveryMode: 'enforce',
+    emptyRecoveryFallback: 'Desculpe, tive um problema. Pode tentar de novo?',
+    ports: {
+        turnStore: myTurnStore,
+        keyProvider: myKeyProvider,
+        auditStore: myAuditStore,
+        memoryStore: myMemoryStore, // optional
+        quotaStore: myQuotaStore, // optional but recommended
+        telemetry: myTelemetrySink, // defaults to Noop
+    },
+})
+
+// Deliver however the channel wants:
+await sendWhatsAppMessage({ to: from, body: result.text })
+
+// result.toolCalls — one-row-per-call summary (joined with toolResults).
+// result.usage — combined totals (primary + synthesis, if enforce fired).
+// result.emptyRecovery — { triggered, attempted, mode } for dashboards.
+// result.finishReason — 'stop' | 'length' | 'tool-calls' | ...
+```
+
+### Differences from `runChatTurn`
+
+| Aspect | `runChatTurn` | `runOneShotTurn` |
+| --- | --- | --- |
+| Driver | `streamText` | `generateText` |
+| Return | `Response \| undefined` (or merge into a `writer`) | `RunOneShotTurnResult` (typed) |
+| Delivery | Caller forwards the SSE / merges into a host stream | Caller delivers `result.text` over the channel's transport |
+| Empty-recovery enforce | Second `streamText`, merged into writer | Second `generateText`, text appended to `result.text` |
+| `writer` arg | Yes — for hosts wrapping in `createUIMessageStream` | No — there is no stream to merge into |
+| `maxOutputTokens` | Not exposed at the kernel surface | Yes — for bounded-length channels |
+
+Everything else is intentionally identical: the same `AiQuotaDeniedError` throws, the same `pending → completed / failed / aborted` turn-row lifecycle, the same prompt-cache split, the same trap-guards (system at top level, `stopWhen` set, empty-registry warn). The `antiToolNarrationRule()` helper applies the same way — compose it into `systemPrompt.static` if your prompt is short.
 
 ## Anthropic tool-calling traps
 

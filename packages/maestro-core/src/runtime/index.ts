@@ -19,3 +19,10 @@ export {
     type RunChatTurnArgs,
     type RunChatTurnPorts,
 } from './run-chat-turn.js'
+export {
+    runOneShotTurn,
+    type RunOneShotTurnArgs,
+    type RunOneShotTurnPorts,
+    type RunOneShotTurnResult,
+    type RunOneShotTurnToolCall,
+} from './run-one-shot-turn.js'
