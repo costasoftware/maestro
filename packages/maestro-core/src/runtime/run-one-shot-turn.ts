@@ -19,6 +19,7 @@ import type { MemoryStore } from '../ports/memory-store.js'
 import type { QuotaStore } from '../ports/quota-store.js'
 import { NoopTelemetrySink, type TelemetrySink } from '../ports/telemetry-sink.js'
 import type { TurnRecord, TurnStore } from '../ports/turn-store.js'
+import type { ToolExceptionHandler } from '../safe-tool.js'
 import type { AgentToolDefinition } from '../tool.js'
 
 import { decideEmptyRecovery, type EmptyRecoveryMode } from './empty-recovery.js'
@@ -57,9 +58,13 @@ import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
  * Same as `runChatTurn`:
  *   - Pre-call quota gate (throws `AiQuotaDeniedError` on deny;
  *     fail-open on port errors by default).
- *   - Two-tier model selection via `selectChatModel`.
+ *   - Two-tier model selection via `selectChatModel`. The selected
+ *     `tier` and the selector's `reason` string are surfaced on the
+ *     returned `RunOneShotTurnResult` so callers can log them on the
+ *     same line as their channel-specific telemetry.
  *   - Provider key via `ModelKeyProvider`.
- *   - Tool building via `buildAiSdkTools` with per-call audit.
+ *   - Tool building via `buildAiSdkTools` with per-call audit and an
+ *     optional `onError` observability hook for thrown exceptions.
  *   - Memory load + cache-control split (memory + dynamic land in
  *     the uncached system segment to preserve prompt-cache reuse).
  *   - Turn-store upsert (`pending` → `completed` | `failed` |
@@ -172,6 +177,19 @@ export interface RunOneShotTurnArgs<TCtx extends BaseToolContext<string>> {
      * text from already-fired tool output.
      */
     toolChoice?: 'auto' | 'required' | 'none'
+    /**
+     * Optional observability hook invoked whenever a tool's `execute`
+     * throws an unhandled exception. Forwarded as-is to
+     * `buildAiSdkTools` for the primary AND the empty-recovery
+     * synthesis call so both tool sets emit the same breadcrumbs.
+     *
+     * Hosts typically wire this to Sentry / Datadog (e.g.
+     * `Sentry.captureException(error, { tags })`). The kernel still
+     * rethrows after capture so the AI SDK marks the tool result as
+     * `error` and the model sees the failure — `onError` is purely for
+     * out-of-band telemetry and is never on the user-facing path.
+     */
+    onError?: ToolExceptionHandler
 }
 
 /**
@@ -202,6 +220,20 @@ export interface RunOneShotTurnResult {
     }
     durationMs: number
     modelId: string
+    /**
+     * Tier the model selector resolved for this turn (`'fast' | 'smart'`).
+     * Mirrors the `tier` field on `turn.finalized` telemetry so callers
+     * can record it on their own log lines (WhatsApp adopters, batch
+     * eval harnesses) without re-running `selectChatModel`.
+     */
+    tier: ModelTier
+    /**
+     * Short reason string from `selectChatModel` describing why the
+     * tier was chosen (e.g. `'default-fast'`, `'long-message'`,
+     * `'keyword:reschedule'`, `'force-override'`). Useful for
+     * dashboards that break down tier escalation rate by reason.
+     */
+    selectionReason: string
     /** `'stop' | 'length' | 'tool-calls' | 'content-filter' | 'error' | 'other'`. */
     finishReason: string
     emptyRecovery: {
@@ -302,6 +334,7 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
         registry: args.tools,
         ctx: args.ctx,
         audit: args.ports.auditStore,
+        onError: args.onError,
         clock,
     })
 
@@ -657,6 +690,8 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
         },
         durationMs,
         modelId: selection.modelId,
+        tier: selection.tier,
+        selectionReason: selection.reason,
         finishReason: typeof primaryResult.finishReason === 'string'
             ? primaryResult.finishReason
             : 'other',
