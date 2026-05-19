@@ -51,6 +51,12 @@ export interface AiSdkTransportOptions {
      * `{ messages: <UIMessage[]> }`. Barbeiro adds `{ id, ... }`.
      * Receives a raw `TransportSendArgs` — narrow `args.messages` to
      * your own `MaestroMessage<TDataMap>[]` shape if you need it.
+     *
+     * Per-send `metadata` from `useMaestroChat#send(text, { metadata })`
+     * is reachable via `args.metadata`. The default body folds it in as
+     * a top-level `metadata` field when present; override this builder
+     * if your backend expects a different shape (e.g. AI SDK v6
+     * `messageMetadata` per-turn).
      */
     readonly bodyBuilder?: (args: AnySendArgs) => unknown
     /**
@@ -104,7 +110,9 @@ async function* iterate(
     const body = JSON.stringify(
         opts.bodyBuilder
             ? opts.bodyBuilder(args)
-            : { messages: args.messages },
+            : args.metadata !== undefined
+              ? { messages: args.messages, metadata: args.metadata }
+              : { messages: args.messages },
     )
 
     const response = await fetchImpl(opts.url, {

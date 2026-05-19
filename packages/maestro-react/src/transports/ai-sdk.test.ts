@@ -145,6 +145,67 @@ describe('aiSdkTransport — data + citations fan-out', () => {
     })
 })
 
+describe('aiSdkTransport — metadata forwarding', () => {
+    it('exposes metadata to bodyBuilder via args.metadata', async () => {
+        const seen: unknown[] = []
+        const fetchImpl = (async () =>
+            new Response(
+                sseStream([{ data: JSON.stringify({ type: 'finish' }) }]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )) as unknown as typeof fetch
+
+        const transport = aiSdkTransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+            bodyBuilder: args => {
+                seen.push(args.metadata)
+                return { messages: args.messages, meta: args.metadata }
+            },
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            metadata: { surface: 'customer', traceId: 'xyz' },
+        })) {
+            // drain
+        }
+        expect(seen).toEqual([{ surface: 'customer', traceId: 'xyz' }])
+    })
+
+    it('default body folds metadata in when no bodyBuilder is provided', async () => {
+        const calls: { url: string; init: RequestInit }[] = []
+        const fetchImpl = (async (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return new Response(
+                sseStream([{ data: JSON.stringify({ type: 'finish' }) }]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = aiSdkTransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            metadata: { idempotencyKey: 'k1' },
+        })) {
+            // drain
+        }
+        expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+            messages: [],
+            metadata: { idempotencyKey: 'k1' },
+        })
+    })
+})
+
 describe('aiSdkTransport — stream-level errors', () => {
     it('error chunk emits a MaestroEvent error and closes', async () => {
         const out = await run(AI_SDK_STREAM_ERROR_FLOW)

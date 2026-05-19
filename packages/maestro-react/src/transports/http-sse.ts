@@ -40,9 +40,16 @@ export interface HttpSSETransportOptions<
      * Customise the POST body. Defaults to `{ messages }` shape, which
      * matches barbeiro's `/api/help/chat`. Backends that expect their
      * own envelope (e.g. `{ thread, input }`) override this.
+     *
+     * `metadata` is the optional second argument passed by the caller —
+     * forwarded from `useMaestroChat#send(text, { metadata })`. It is
+     * `undefined` when the caller did not supply any. Folding it into
+     * the wire body is the bodyBuilder's responsibility; the transport
+     * never inspects it.
      */
     readonly bodyBuilder?: (
         messages: ReadonlyArray<MaestroMessage<TDataMap>>,
+        metadata?: unknown,
     ) => unknown
     /**
      * Override fetch — primarily for tests. Defaults to globalThis.fetch.
@@ -79,8 +86,10 @@ async function* iterate<TDataMap>(
     const headers = await resolveHeaders(opts.headers)
     const body = JSON.stringify(
         opts.bodyBuilder
-            ? opts.bodyBuilder(args.messages)
-            : { messages: args.messages },
+            ? opts.bodyBuilder(args.messages, args.metadata)
+            : args.metadata !== undefined
+              ? { messages: args.messages, metadata: args.metadata }
+              : { messages: args.messages },
     )
 
     const response = await fetchImpl(opts.url, {

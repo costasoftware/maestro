@@ -131,6 +131,110 @@ describe('httpSSETransport', () => {
         })
     })
 
+    it('forwards send-time metadata to bodyBuilder as the second argument', async () => {
+        const seen: Array<{
+            messages: unknown
+            metadata: unknown
+        }> = []
+        const fetchImpl = (async (_url: string, _init: RequestInit) => {
+            return new Response(
+                sseStream([
+                    { data: JSON.stringify({ type: 'done' }) },
+                ]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = httpSSETransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+            bodyBuilder: (messages, metadata) => {
+                seen.push({ messages, metadata })
+                return { messages, metadata }
+            },
+        })
+
+        const out: MaestroEvent[] = []
+        for await (const e of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            metadata: { requestId: 'abc', surface: 'admin' },
+        })) {
+            out.push(e)
+        }
+
+        expect(seen).toHaveLength(1)
+        expect(seen[0]!.metadata).toEqual({
+            requestId: 'abc',
+            surface: 'admin',
+        })
+    })
+
+    it('default body folds metadata in when no bodyBuilder is provided', async () => {
+        const calls: { url: string; init: RequestInit }[] = []
+        const fetchImpl = (async (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return new Response(
+                sseStream([
+                    { data: JSON.stringify({ type: 'done' }) },
+                ]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = httpSSETransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            metadata: { tag: 'regen' },
+        })) {
+            // drain
+        }
+        expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+            messages: [],
+            metadata: { tag: 'regen' },
+        })
+    })
+
+    it('default body omits metadata when none is supplied', async () => {
+        const calls: { url: string; init: RequestInit }[] = []
+        const fetchImpl = (async (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return new Response(
+                sseStream([
+                    { data: JSON.stringify({ type: 'done' }) },
+                ]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = httpSSETransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+        })) {
+            // drain
+        }
+        expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+            messages: [],
+        })
+    })
+
     it('stops yielding after a `done` event (no post-terminal leaks)', async () => {
         const fetchImpl = makeSseFetch([
             { data: JSON.stringify({ type: 'text-delta', delta: 'a' }) },
