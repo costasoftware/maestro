@@ -36,7 +36,11 @@
  */
 
 import type { MaestroEvent } from '../protocol.js'
-import type { Transport, TransportSendArgs } from '../transport.js'
+import type {
+    BodyBuilderArgs,
+    Transport,
+    TransportSendArgs,
+} from '../transport.js'
 import { parseSseStream } from './sse-parser.js'
 
 export interface AiSdkTransportOptions {
@@ -49,8 +53,8 @@ export interface AiSdkTransportOptions {
     /**
      * Override the POST body. Defaults to the AI SDK convention:
      * `{ messages: <UIMessage[]> }`. Barbeiro adds `{ id, ... }`.
-     * Receives a raw `TransportSendArgs` — narrow `args.messages` to
-     * your own `MaestroMessage<TDataMap>[]` shape if you need it.
+     * Receives the unified `BodyBuilderArgs` object (same shape across
+     * all three transports as of 0.5.0-beta).
      *
      * Per-send `metadata` from `useMaestroChat#send(text, { metadata })`
      * is reachable via `args.metadata`. Per-send `attachments` (added
@@ -61,7 +65,7 @@ export interface AiSdkTransportOptions {
      * into the AI SDK `parts: [{ type: 'file', ... }]` per-message
      * shape).
      */
-    readonly bodyBuilder?: (args: AnySendArgs) => unknown
+    readonly bodyBuilder?: (args: BodyBuilderArgs) => unknown
     /**
      * Custom data-name → MaestroEvent key mapping. By convention,
      * `data-citations` chips fan out into one citation event per entry;
@@ -73,9 +77,9 @@ export interface AiSdkTransportOptions {
 }
 
 /**
- * Loose alias for `TransportSendArgs` with an unknown data map.
- * Used in `bodyBuilder` so consumers don't need to thread the
- * generic through the options type.
+ * Loose alias for `TransportSendArgs` with an unknown data map. Used
+ * internally so the iterator doesn't have to thread `TDataMap` through
+ * every helper.
  */
 type AnySendArgs = TransportSendArgs<Record<string, unknown>>
 
@@ -110,8 +114,15 @@ async function* iterate(
     }
 
     const headers = await resolveHeaders(opts.headers)
+    const builderArgs: BodyBuilderArgs = {
+        messages: args.messages,
+        metadata: args.metadata,
+        attachments: args.attachments,
+    }
     const body = JSON.stringify(
-        opts.bodyBuilder ? opts.bodyBuilder(args) : buildDefaultBody(args),
+        opts.bodyBuilder
+            ? opts.bodyBuilder(builderArgs)
+            : buildDefaultBody(args),
     )
 
     const response = await fetchImpl(opts.url, {

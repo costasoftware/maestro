@@ -4,7 +4,9 @@ React surface for the [Maestro](https://github.com/costasoftware/maestro) agent 
 
 ## Status
 
-`0.4.0-beta` — additive release. Bumps `MaestroChatProtocol` to `0.2.0-beta` and closes GAP-1 surfaced by trading-rag's P4 adoption (`Alfredao/trading-rag#1`): the protocol now has a first-class slot for user-attached media. `send(text, { attachments: [...] })` stamps the attachments onto the user `MaestroMessage` AND forwards them to the transport — replacing the side-channel `Map<userMessageId, previewUrl>` workaround consumers were inventing per app. See [Sending attachments](#sending-attachments).
+`0.5.0-beta` — kernel-side API consolidation. Unifies the `bodyBuilder` signature across all three transports onto a single `BodyBuilderArgs` object shape; `httpSSETransport`'s legacy positional `(messages, metadata, attachments)` form still works but emits a one-time deprecation warning and is scheduled for removal in `1.0`. Wire format is unchanged — protocol stays at `0.2.0-beta`. The divergence was a v0.4 oversight surfaced by the first attachments consumer ([`Alfredao/trading-rag#2`](https://github.com/Alfredao/trading-rag/pull/2)) and called out in 0.4's adoption gotchas; v0.5 cleans it up before more consumers depend on the positional shape.
+
+`0.4.0-beta` — additive release. Bumped `MaestroChatProtocol` to `0.2.0-beta` and closed GAP-1 surfaced by trading-rag's P4 adoption (`Alfredao/trading-rag#1`): the protocol now has a first-class slot for user-attached media. `send(text, { attachments: [...] })` stamps the attachments onto the user `MaestroMessage` AND forwards them to the transport — replacing the side-channel `Map<userMessageId, previewUrl>` workaround consumers were inventing per app. See [Sending attachments](#sending-attachments).
 
 | Phase | Ships |
 | --- | --- |
@@ -84,13 +86,13 @@ Consumers who don't want types omit the generic — `data[].value` is `unknown`.
 
 ### Send-time metadata
 
-`send(text, { metadata })` reaches the transport via `TransportSendArgs.metadata`. Built-in transports fold it into the default POST body as a top-level `metadata` field; if you pass a custom `bodyBuilder` it receives the metadata too — as the second argument for `httpSSETransport`, as `args.metadata` for `aiSdkTransport` and `legacySseTransport`.
+`send(text, { metadata })` reaches the transport via `TransportSendArgs.metadata`. Built-in transports fold it into the default POST body as a top-level `metadata` field; if you pass a custom `bodyBuilder` it receives the metadata on `args.metadata` of the unified `BodyBuilderArgs` object (same shape for all three transports as of `0.5.0-beta`).
 
 ```tsx
 const { send } = useMaestroChat({
     transport: httpSSETransport({
         url: '/api/chat',
-        bodyBuilder: (messages, metadata) => ({
+        bodyBuilder: ({ messages, metadata }) => ({
             messages,
             // Per-turn envelope — request id, surface, idempotency key, …
             ...(metadata as Record<string, unknown> | undefined),
@@ -209,7 +211,7 @@ Default request body produced by all three transports (`httpSSETransport`, `aiSd
 }
 ```
 
-The top-level `attachments` mirrors the trailing user message's attachments. Backends SHOULD prefer the top-level field as the authoritative payload for the in-flight turn (one place to look, no walking `messages`). Custom `bodyBuilder`s receive `attachments` as a parameter (`httpSSETransport`'s third argument) or on `args.attachments` (`aiSdkTransport` / `legacySseTransport`) so you can re-shape into any format your backend expects (e.g. AI SDK v6 `parts: [{ type: 'file', ... }]` per-message).
+The top-level `attachments` mirrors the trailing user message's attachments. Backends SHOULD prefer the top-level field as the authoritative payload for the in-flight turn (one place to look, no walking `messages`). Custom `bodyBuilder`s receive `attachments` on `args.attachments` of the unified `BodyBuilderArgs` object (same shape for all three transports as of `0.5.0-beta`) so you can re-shape into any format your backend expects (e.g. AI SDK v6 `parts: [{ type: 'file', ... }]` per-message).
 
 `regenerate()` re-uses the trailing user message's attachments by default. Pass `regenerate({ attachments: [] })` to retry without media (useful when an upload failed and the user wants to drop it).
 
@@ -217,13 +219,18 @@ The top-level `attachments` mirrors the trailing user message's attachments. Bac
 
 Surfaced by the first consumer adopting the canonical `attachments` field ([`Alfredao/trading-rag#2`](https://github.com/Alfredao/trading-rag/pull/2)) on top of the protocol bump ([`costasoftware/maestro#20`](https://github.com/costasoftware/maestro/pull/20)). Watch for these when wiring `0.4.0-beta` into an existing app.
 
--   **`bodyBuilder` signature is not uniform across transports.** `httpSSETransport` passes positional args `(messages, metadata, attachments)`; `aiSdkTransport` and `legacySseTransport` pass an object `(args)` with `args.messages` / `args.metadata` / `args.attachments`. Custom `bodyBuilder`s that don't accept the new field still type-check (it's optional), but you must explicitly fold `attachments` into your body shape — the default fold only kicks in when no custom `bodyBuilder` is supplied. **Heads-up:** the divergence is a v0.4 oversight; v0.5 will unify on the object-arg shape and deprecate the positional form.
+-   **`bodyBuilder` is now unified across all three transports (`0.5.0-beta`).** Every transport receives the same `BodyBuilderArgs` object: `{ messages, metadata?, attachments? }`. Custom `bodyBuilder`s that don't fold `attachments` into your body shape still type-check (it's optional), but the default top-level fold only kicks in when no custom `bodyBuilder` is supplied. The legacy positional form on `httpSSETransport` from `0.4` still works for backwards compatibility — runtime dispatch detects it via `function.length`, calls it positionally, and emits a one-time `console.warn` per builder in non-production builds. The positional form is scheduled for removal in `1.0`; switch when you touch the file.
 
     ```ts
-    // httpSSETransport
-    bodyBuilder: (messages, metadata, attachments) => ({ messages, attachments, ...metadata })
-    // aiSdkTransport / legacySseTransport
-    bodyBuilder: ({ messages, metadata, attachments }) => ({ messages, attachments, ...metadata })
+    // Recommended — unified shape, works for all three transports
+    bodyBuilder: ({ messages, metadata, attachments }) => ({
+        messages,
+        attachments,
+        ...(metadata as Record<string, unknown> | undefined),
+    })
+
+    // Still works on httpSSETransport (deprecated, removed in 1.0)
+    bodyBuilder: (messages, metadata, attachments) => ({ messages, attachments })
     ```
 
 -   **Two parallel handles can coexist.** The canonical `attachments` field is for protocol portability and UI preview. If your backend already has a fast dispatch handle for the file (filesystem key, internal ID), keep both — don't refactor the backend to use the canonical URL as its primary key. Forcing HTTP re-fetch instead of direct access is a real perf hit.
@@ -259,11 +266,15 @@ import { httpSSETransport } from 'maestro-react'
 const transport = httpSSETransport({
     url: '/api/chat',
     headers: () => ({ authorization: `Bearer ${getToken()}` }),
-    bodyBuilder: (messages, metadata) => ({ thread: 'main', messages, metadata }),
+    bodyBuilder: ({ messages, metadata }) => ({
+        thread: 'main',
+        messages,
+        metadata,
+    }),
 })
 ```
 
-`metadata` is the optional second argument passed by `useMaestroChat#send(text, { metadata })`. It is `undefined` when the caller did not supply any.
+`bodyBuilder` receives the unified `BodyBuilderArgs` object: `{ messages, metadata?, attachments? }`. `metadata` is forwarded from `useMaestroChat#send(text, { metadata })`; `attachments` from `useMaestroChat#send(text, { attachments })`. Both are `undefined` when the caller did not supply them. The legacy positional form `(messages, metadata, attachments)` still works on this transport for backwards compatibility with `0.4.x` consumers but is deprecated and slated for removal in `1.0`.
 
 ### `aiSdkTransport` — AI SDK v6 `UIMessageStream`
 

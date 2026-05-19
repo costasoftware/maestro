@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { MaestroEvent } from '../protocol.js'
+import type { BodyBuilderArgs } from '../transport.js'
 import { httpSSETransport } from './http-sse.js'
 import { makeSseFetch, sseStream } from './test-utils.js'
 
@@ -94,7 +95,7 @@ describe('httpSSETransport', () => {
         expect(onParseError).toHaveBeenCalledTimes(1)
     })
 
-    it('honours bodyBuilder + headers factory', async () => {
+    it('honours bodyBuilder (object-arg) + headers factory', async () => {
         const calls: { url: string; init: RequestInit }[] = []
         const fetchImpl = (async (url: string, init: RequestInit) => {
             calls.push({ url, init })
@@ -113,7 +114,9 @@ describe('httpSSETransport', () => {
             url: 'https://api/x',
             fetch: fetchImpl,
             headers: () => ({ authorization: 'Bearer t' }),
-            bodyBuilder: msgs => ({ custom: { count: msgs.length } }),
+            bodyBuilder: ({ messages }: BodyBuilderArgs) => ({
+                custom: { count: messages.length },
+            }),
         })
 
         await collect(
@@ -410,5 +413,152 @@ describe('httpSSETransport', () => {
             { type: 'text-delta', delta: 'a' },
             { type: 'done' },
         ])
+    })
+})
+
+describe('httpSSETransport — v0.5 bodyBuilder unification', () => {
+    function silentSseFetch(): typeof fetch {
+        return (async () =>
+            new Response(
+                sseStream([{ data: JSON.stringify({ type: 'done' }) }]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )) as unknown as typeof fetch
+    }
+
+    it('object-arg bodyBuilder receives messages, metadata, attachments on args', async () => {
+        const seen: Array<{
+            messages: unknown
+            metadata: unknown
+            attachments: unknown
+        }> = []
+        const transport = httpSSETransport({
+            url: 'https://api/x',
+            fetch: silentSseFetch(),
+            bodyBuilder: (args: BodyBuilderArgs) => {
+                seen.push({
+                    messages: args.messages,
+                    metadata: args.metadata,
+                    attachments: args.attachments,
+                })
+                return { messages: args.messages }
+            },
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            metadata: { requestId: 'r1' },
+            attachments: [{ kind: 'image', url: 'https://cdn/a.png' }],
+        })) {
+            // drain
+        }
+        expect(seen).toEqual([
+            {
+                messages: [],
+                metadata: { requestId: 'r1' },
+                attachments: [{ kind: 'image', url: 'https://cdn/a.png' }],
+            },
+        ])
+    })
+
+    it('positional bodyBuilder still works (back-compat with 0.4.x)', async () => {
+        const seen: Array<{
+            messages: unknown
+            metadata: unknown
+            attachments: unknown
+        }> = []
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+            const transport = httpSSETransport({
+                url: 'https://api/x',
+                fetch: silentSseFetch(),
+                bodyBuilder: (messages, metadata, attachments) => {
+                    seen.push({ messages, metadata, attachments })
+                    return { messages, metadata, attachments }
+                },
+            })
+            for await (const _ of transport.send({
+                messages: [],
+                signal: new AbortController().signal,
+                metadata: { requestId: 'r2' },
+                attachments: [{ kind: 'file', url: 'https://cdn/x.pdf' }],
+            })) {
+                // drain
+            }
+        } finally {
+            warnSpy.mockRestore()
+        }
+        expect(seen).toEqual([
+            {
+                messages: [],
+                metadata: { requestId: 'r2' },
+                attachments: [{ kind: 'file', url: 'https://cdn/x.pdf' }],
+            },
+        ])
+    })
+
+    it('positional bodyBuilder emits the deprecation warn exactly once per builder', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+            // Fresh closure → not yet in the module-level WeakSet.
+            const positional = (
+                messages: unknown,
+                metadata?: unknown,
+                attachments?: unknown,
+            ) => ({ messages, metadata, attachments })
+
+            const transport = httpSSETransport({
+                url: 'https://api/x',
+                fetch: silentSseFetch(),
+                bodyBuilder: positional,
+            })
+
+            for (let i = 0; i < 3; i += 1) {
+                for await (const _ of transport.send({
+                    messages: [],
+                    signal: new AbortController().signal,
+                })) {
+                    // drain
+                }
+            }
+
+            const deprecationCalls = warnSpy.mock.calls.filter(
+                args =>
+                    typeof args[0] === 'string' &&
+                    args[0].includes('positional args are deprecated'),
+            )
+            expect(deprecationCalls).toHaveLength(1)
+        } finally {
+            warnSpy.mockRestore()
+        }
+    })
+
+    it('object-arg bodyBuilder never emits the deprecation warn', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+            const transport = httpSSETransport({
+                url: 'https://api/x',
+                fetch: silentSseFetch(),
+                bodyBuilder: (args: BodyBuilderArgs) => ({
+                    messages: args.messages,
+                }),
+            })
+            for await (const _ of transport.send({
+                messages: [],
+                signal: new AbortController().signal,
+            })) {
+                // drain
+            }
+            const deprecationCalls = warnSpy.mock.calls.filter(
+                a =>
+                    typeof a[0] === 'string' &&
+                    a[0].includes('positional args are deprecated'),
+            )
+            expect(deprecationCalls).toHaveLength(0)
+        } finally {
+            warnSpy.mockRestore()
+        }
     })
 })

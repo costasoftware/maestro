@@ -65,3 +65,40 @@ export interface Transport<
 > {
     send(args: TransportSendArgs<TDataMap>): AsyncIterable<MaestroEvent>
 }
+
+/**
+ * Shared argument shape for every transport's `bodyBuilder` option.
+ *
+ * Unified in 0.5.0-beta. Prior to this, `httpSSETransport` accepted
+ * positional `(messages, metadata, attachments)` while `aiSdkTransport`
+ * and `legacySseTransport` already accepted an object — the divergence
+ * was a v0.4 oversight surfaced by the first attachments consumer
+ * (trading-rag) and called out in `0.4.0-beta`'s adoption gotchas.
+ *
+ * `httpSSETransport` continues to accept the positional shape with a
+ * one-time deprecation warning per builder so existing consumers keep
+ * working through the 0.5 line; the positional form is scheduled for
+ * removal in 1.0.
+ */
+export interface BodyBuilderArgs<
+    TDataMap = Record<string, unknown>,
+> {
+    /**
+     * Full message history, including the trailing user message the
+     * hook just appended (and any `attachments` it stamped on that
+     * message). Treat as read-only — re-shape into a wire payload.
+     */
+    readonly messages: ReadonlyArray<MaestroMessage<TDataMap>>
+    /**
+     * Per-send envelope forwarded from
+     * `useMaestroChat#send(text, { metadata })` (or `regenerate`).
+     * `undefined` when the caller did not supply any.
+     */
+    readonly metadata?: unknown
+    /**
+     * Per-send user-attached media forwarded from
+     * `useMaestroChat#send(text, { attachments })`. Added in protocol
+     * 0.2.0-beta. `undefined` when the caller did not attach anything.
+     */
+    readonly attachments?: ReadonlyArray<MaestroAttachment>
+}

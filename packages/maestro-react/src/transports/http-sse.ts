@@ -19,7 +19,11 @@
 
 import type { MaestroAttachment, MaestroEvent } from '../protocol.js'
 import type { MaestroMessage } from '../message.js'
-import type { Transport, TransportSendArgs } from '../transport.js'
+import type {
+    BodyBuilderArgs,
+    Transport,
+    TransportSendArgs,
+} from '../transport.js'
 import { parseSseStream } from './sse-parser.js'
 
 export interface HttpSSETransportOptions<
@@ -41,21 +45,25 @@ export interface HttpSSETransportOptions<
      * matches barbeiro's `/api/help/chat`. Backends that expect their
      * own envelope (e.g. `{ thread, input }`) override this.
      *
-     * `metadata` is the optional second argument passed by the caller —
-     * forwarded from `useMaestroChat#send(text, { metadata })`. It is
-     * `undefined` when the caller did not supply any. Folding it into
-     * the wire body is the bodyBuilder's responsibility; the transport
-     * never inspects it.
+     * Receives the unified `BodyBuilderArgs` object (same shape across
+     * all three transports as of 0.5.0-beta):
      *
-     * `attachments` (added in protocol 0.2.0-beta) is the third
-     * argument, forwarded from `useMaestroChat#send(text, { attachments })`.
-     * It is `undefined` when the caller did not attach anything.
+     *   - `args.messages` — full history with the trailing user turn
+     *     and any `attachments` the hook stamped on it
+     *   - `args.metadata` — per-send envelope from
+     *     `useMaestroChat#send(text, { metadata })`, `undefined` when
+     *     omitted
+     *   - `args.attachments` — per-send media from
+     *     `useMaestroChat#send(text, { attachments })`, `undefined`
+     *     when omitted (added in protocol 0.2.0-beta)
+     *
+     * @deprecated The legacy positional form `(messages, metadata,
+     * attachments)` is still accepted for backwards compatibility with
+     * 0.4.x consumers, but emits a one-time `console.warn` in non-
+     * production builds. It is scheduled for removal in 1.0 — switch
+     * to the object-arg form.
      */
-    readonly bodyBuilder?: (
-        messages: ReadonlyArray<MaestroMessage<TDataMap>>,
-        metadata?: unknown,
-        attachments?: ReadonlyArray<MaestroAttachment>,
-    ) => unknown
+    readonly bodyBuilder?: BodyBuilderFn<TDataMap>
     /**
      * Override fetch — primarily for tests. Defaults to globalThis.fetch.
      */
@@ -66,6 +74,27 @@ export interface HttpSSETransportOptions<
      */
     readonly onParseError?: (raw: string, error: unknown) => void
 }
+
+/**
+ * Modern object-arg shape (preferred, 0.5+).
+ */
+type BodyBuilderObjectFn<TDataMap> = (
+    args: BodyBuilderArgs<TDataMap>,
+) => unknown
+
+/**
+ * Legacy positional shape carried over from 0.4. Still accepted; emits
+ * a one-time deprecation warning per builder. Slated for removal in 1.0.
+ */
+type BodyBuilderPositionalFn<TDataMap> = (
+    messages: ReadonlyArray<MaestroMessage<TDataMap>>,
+    metadata?: unknown,
+    attachments?: ReadonlyArray<MaestroAttachment>,
+) => unknown
+
+type BodyBuilderFn<TDataMap> =
+    | BodyBuilderObjectFn<TDataMap>
+    | BodyBuilderPositionalFn<TDataMap>
 
 export function httpSSETransport<
     TDataMap = Record<string, unknown>,
@@ -89,9 +118,14 @@ async function* iterate<TDataMap>(
     }
 
     const headers = await resolveHeaders(opts.headers)
+    const builderArgs: BodyBuilderArgs<TDataMap> = {
+        messages: args.messages,
+        metadata: args.metadata,
+        attachments: args.attachments,
+    }
     const body = JSON.stringify(
         opts.bodyBuilder
-            ? opts.bodyBuilder(args.messages, args.metadata, args.attachments)
+            ? callBodyBuilder(opts.bodyBuilder, builderArgs)
             : buildDefaultBody(
                   args.messages,
                   args.metadata,
@@ -163,6 +197,75 @@ async function* iterate<TDataMap>(
         // the reducer can transition the message to `complete`.
         yield { type: 'done' }
     }
+}
+
+/**
+ * Tracks `bodyBuilder` functions we've already warned about so the
+ * deprecation message fires at most once per builder per process —
+ * busy chats fire `send()` many times a session and noisy logs are a
+ * known adoption irritant.
+ *
+ * `WeakSet` accepts `Function` keys in modern V8 (Node 18+, all
+ * browser targets we support) and releases them when the consumer
+ * drops the reference, so this never holds onto stale closures.
+ */
+const POSITIONAL_BUILDER_WARNED = new WeakSet<object>()
+
+/**
+ * Read `NODE_ENV` without assuming `process` exists at runtime — the
+ * package ships to both Node and browser targets, and the build's
+ * `tsconfig` does not pull in `@types/node`. Bundlers replace the
+ * inlined access string in production builds; in pure browsers
+ * `process` is undefined and we fall through to "non-production" so
+ * the deprecation warn still fires during local dev.
+ */
+function isProduction(): boolean {
+    const g = globalThis as { process?: { env?: { NODE_ENV?: string } } }
+    return g.process?.env?.NODE_ENV === 'production'
+}
+
+/**
+ * Dispatch to either the modern object-arg `bodyBuilder` or the legacy
+ * positional shape, deciding by `function.length`.
+ *
+ * Heuristic, intentionally: `function.length` is reliable for the
+ * common cases — arrow functions, named-param functions, and bound
+ * functions all report their declared param count correctly. A class
+ * method declared with default values for every parameter would
+ * misreport as `0` and route to the object-arg branch even if the
+ * author intended positional — but no real consumer hits that, and
+ * the cost of guessing wrong is one bad JSON body, not a corrupted
+ * stream. The positional form is scheduled for removal in 1.0, at
+ * which point this helper goes away.
+ */
+function callBodyBuilder<TDataMap>(
+    bb: BodyBuilderFn<TDataMap>,
+    args: BodyBuilderArgs<TDataMap>,
+): unknown {
+    // length <= 1 → object-arg shape (modern) or zero-arg
+    // (consumer ignores everything). Both are safe to call with the
+    // unified args object.
+    if (bb.length <= 1) {
+        return (bb as BodyBuilderObjectFn<TDataMap>)(args)
+    }
+    // length > 1 → legacy positional shape. Warn once per builder.
+    // `process.env.NODE_ENV` is accessed defensively — the package
+    // ships to both Node bundlers (which inline it) and pure browser
+    // bundles where `process` may be undefined. Bundlers that DCE on
+    // the inlined string drop the warn branch in production builds.
+    if (!isProduction() && !POSITIONAL_BUILDER_WARNED.has(bb)) {
+        POSITIONAL_BUILDER_WARNED.add(bb)
+        // eslint-disable-next-line no-console
+        console.warn(
+            '[maestro-react] httpSSETransport bodyBuilder positional args are deprecated; ' +
+                'switch to `(args) => ...` per v0.5 unification. Positional form will be removed in v1.0.',
+        )
+    }
+    return (bb as BodyBuilderPositionalFn<TDataMap>)(
+        args.messages,
+        args.metadata,
+        args.attachments,
+    )
 }
 
 /**
