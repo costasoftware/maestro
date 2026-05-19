@@ -4,11 +4,12 @@
  * `MaestroEvent`s; the rest of the library treats their stream as if
  * it were protocol-native.
  *
- * Used by:
- *   - numenion: event names `text_delta` | `tool_use` | `tool_result`
- *     | `error` | `done`
- *   - trading-rag (current): `token` | `agent_start` | `agent_step`
- *     | `agent_result` | `sources` | `chart_*` | `done` | `error`
+ * No current production consumer — every real consumer to date emits
+ * AI SDK v6 `UIMessageStream` (barbeiro, numenion) or the protocol
+ * natively (trading-rag, post-P4). The transport remains the contract
+ * for any future custom-SSE backend; example shape preserved in
+ * `fixtures/trading-rag-wire.ts` (the pre-P4 trading-rag wire) so
+ * the eventMap pattern stays copy-pastable.
  *
  * The mapper returns 0, 1, or N MaestroEvents per legacy frame. Unknown
  * event names are logged through `onUnknownEvent` (defaults to
@@ -28,8 +29,9 @@ import { parseSseStream } from './sse-parser.js'
 export interface LegacyEventMapContext {
     /**
      * Generate a fresh callId for synthetic tool-call events. Useful
-     * when the legacy stream doesn't carry a callId — numenion's
-     * `tool_use` is the canonical example.
+     * when the legacy stream doesn't carry a callId (common in
+     * hand-rolled SSE schemas that emit `tool_use` / `tool_result`
+     * pairs with only a `name`).
      */
     nextCallId(): string
     /**
@@ -65,8 +67,8 @@ export interface LegacySseTransportOptions<
     readonly eventMap: LegacyEventMap<TDataMap>
     /**
      * Customise the POST body. Defaults to `{ messages }`. Backends
-     * with their own envelope (numenion's UIMessage[] from useChat,
-     * trading-rag's `{ message, conversation_id }`) override this.
+     * with their own envelope (e.g. trading-rag's
+     * `{ message, conversation_id }`) override this.
      *
      * Receives the unified `BodyBuilderArgs` object (same shape across
      * all three transports as of 0.5.0-beta): `args.messages`,

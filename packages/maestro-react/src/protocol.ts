@@ -31,8 +31,9 @@
  * D2. `tool-progress` is first-class (not folded into `data`)
  *   - Progress events have a known UX rendering (status chip / spinner
  *     / inline updating text) that differs from arbitrary data
- *     attachments. Trading-rag's `agent_step` and numenion's
- *     incremental tool messaging both map cleanly onto this shape.
+ *     attachments. Trading-rag's `agent_step` is a canonical example;
+ *     any agent that streams intermediate per-step status maps
+ *     cleanly onto this shape.
  *   - Keeping it separate means a default chat UI can render progress
  *     without knowing any backend-specific keys.
  *

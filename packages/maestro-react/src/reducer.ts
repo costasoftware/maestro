@@ -228,9 +228,9 @@ function applyToolResult<TDataMap>(
     if (idx === -1) {
         // Result for an unknown call — synthesise a placeholder call.
         // Legacy SSE adapters may legitimately produce this if a
-        // backend emits results without a preceding call (numenion's
-        // tool_result has no callId — the adapter must synthesise one
-        // and pair them, see legacy-sse.ts).
+        // backend emits results without a preceding call (e.g. a
+        // `tool_result` frame with no callId — the adapter must
+        // synthesise one and pair them, see legacy-sse.ts).
         const synthesised: MaestroToolCall = {
             callId: event.callId,
             name: '(unknown)',
