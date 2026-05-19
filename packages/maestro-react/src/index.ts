@@ -41,7 +41,11 @@ export {
 } from './reducer.js'
 
 // Transport contract + bundled implementations.
-export type { Transport, TransportSendArgs } from './transport.js'
+export type {
+    BodyBuilderArgs,
+    Transport,
+    TransportSendArgs,
+} from './transport.js'
 export {
     aiSdkTransport,
     type AiSdkTransportOptions,

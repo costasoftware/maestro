@@ -18,7 +18,11 @@
  */
 
 import type { MaestroEvent } from '../protocol.js'
-import type { Transport, TransportSendArgs } from '../transport.js'
+import type {
+    BodyBuilderArgs,
+    Transport,
+    TransportSendArgs,
+} from '../transport.js'
 import { parseSseStream } from './sse-parser.js'
 
 export interface LegacyEventMapContext {
@@ -64,12 +68,12 @@ export interface LegacySseTransportOptions<
      * with their own envelope (numenion's UIMessage[] from useChat,
      * trading-rag's `{ message, conversation_id }`) override this.
      *
-     * Per-send `metadata` from `useMaestroChat#send(text, { metadata })`
-     * is reachable via `args.metadata`. Per-send `attachments` (added
-     * in protocol 0.2.0-beta) is reachable via `args.attachments`. The
-     * default body folds both in as top-level fields when present.
+     * Receives the unified `BodyBuilderArgs` object (same shape across
+     * all three transports as of 0.5.0-beta): `args.messages`,
+     * `args.metadata`, `args.attachments`. The default body folds
+     * `metadata` and `attachments` in as top-level fields when present.
      */
-    readonly bodyBuilder?: (args: TransportSendArgs<TDataMap>) => unknown
+    readonly bodyBuilder?: (args: BodyBuilderArgs<TDataMap>) => unknown
     readonly fetch?: typeof fetch
     /**
      * Invoked when an `event:` name has no mapper entry. Defaults to
@@ -108,8 +112,15 @@ async function* iterate<TDataMap>(
     }
 
     const headers = await resolveHeaders(opts.headers)
+    const builderArgs: BodyBuilderArgs<TDataMap> = {
+        messages: args.messages,
+        metadata: args.metadata,
+        attachments: args.attachments,
+    }
     const body = JSON.stringify(
-        opts.bodyBuilder ? opts.bodyBuilder(args) : buildDefaultBody(args),
+        opts.bodyBuilder
+            ? opts.bodyBuilder(builderArgs)
+            : buildDefaultBody(args),
     )
 
     const response = await fetchImpl(opts.url, {
