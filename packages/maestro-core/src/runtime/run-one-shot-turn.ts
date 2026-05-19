@@ -156,6 +156,22 @@ export interface RunOneShotTurnArgs<TCtx extends BaseToolContext<string>> {
      * bounded output length.
      */
     maxOutputTokens?: number
+    /**
+     * Forwarded to `generateText`. Defaults to `'auto'` (model decides).
+     *
+     *   - `'auto'` — model decides whether to call a tool (default).
+     *   - `'required'` — model MUST call at least one tool. Useful for
+     *     retry paths that detected a stall (model emitted a "I'll
+     *     check on that" stub without actually invoking the tool).
+     *   - `'none'` — model MUST NOT call any tool. Useful for forced
+     *     text-only summarisation passes.
+     *
+     * The internal empty-recovery synthesis call (when
+     * `emptyRecoveryMode: 'enforce'` triggers) ALWAYS uses `'none'`
+     * regardless of this arg, since its purpose is to extract pure
+     * text from already-fired tool output.
+     */
+    toolChoice?: 'auto' | 'required' | 'none'
 }
 
 /**
@@ -368,6 +384,7 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
             system: cached.system,
             messages: userMessages,
             tools: cached.tools,
+            toolChoice: args.toolChoice ?? 'auto',
             stopWhen: stepCountIs(args.maxSteps ?? 5),
             abortSignal: args.abortSignal,
             ...(typeof args.maxOutputTokens === 'number'

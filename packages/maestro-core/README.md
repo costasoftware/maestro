@@ -182,6 +182,49 @@ await sendWhatsAppMessage({ to: from, body: result.text })
 
 Everything else is intentionally identical: the same `AiQuotaDeniedError` throws, the same `pending → completed / failed / aborted` turn-row lifecycle, the same prompt-cache split, the same trap-guards (system at top level, `stopWhen` set, empty-registry warn). The `antiToolNarrationRule()` helper applies the same way — compose it into `systemPrompt.static` if your prompt is short.
 
+### Forcing tool use with `toolChoice`
+
+`runOneShotTurn` forwards an optional `toolChoice` arg to `generateText` (default `'auto'` — model decides, identical to the AI SDK default, so existing callers see zero behaviour change). Set `'required'` when the host has detected a stall and wants to force a tool invocation on the retry; set `'none'` for forced text-only summarisation passes.
+
+The motivating use case is the WhatsApp stall-retry pattern. When Claude emits a stub like "Let me check on that for you" with no tool call while tools were available, the host re-runs the turn with `toolChoice: 'required'` to force the model down the tool-use path:
+
+```ts
+const first = await runOneShotTurn({
+    threadId,
+    ctx,
+    messages,
+    tools,
+    systemPrompt,
+    models,
+    ports,
+})
+
+// Host-side stall detection: tools were available, model emitted text but
+// no tool call, and the text matches a known stall regex.
+const looksLikeStall =
+    first.toolCalls.length === 0 &&
+    tools.length > 0 &&
+    /\b(let me check|i'?ll look|one moment|hold on)\b/i.test(first.text)
+
+if (looksLikeStall) {
+    const retry = await runOneShotTurn({
+        threadId,
+        ctx,
+        messages,
+        tools,
+        systemPrompt,
+        models,
+        ports,
+        toolChoice: 'required', // force a tool invocation this pass
+    })
+    await sendWhatsAppMessage({ to: from, body: retry.text })
+} else {
+    await sendWhatsAppMessage({ to: from, body: first.text })
+}
+```
+
+The internal empty-recovery synthesis call (when `emptyRecoveryMode: 'enforce'` triggers) always uses `'none'` regardless of this arg — its job is to extract pure text from already-fired tool output, so allowing further tool calls would defeat the recovery.
+
 ## Anthropic tool-calling traps
 
 When Anthropic Claude outputs raw `<function_calls><invoke name="...">` XML in its prose response instead of structured tool-use blocks, the model has fallen back to its pre-tool-use training format because something upstream prevented the request from engaging Anthropic's tool-use API path. There are four independent failure modes that all surface as the same symptom. Each one is individually invisible to type checks. All four must be right before shipping.
