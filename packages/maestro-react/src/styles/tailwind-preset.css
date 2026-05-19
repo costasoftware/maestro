@@ -1,0 +1,136 @@
+/*
+ * maestro-react — optional Tailwind preset.
+ *
+ * Apps on Tailwind that want the canonical look as `@layer components`
+ * (so utility overrides win) can import this INSTEAD of `base.css`:
+ *
+ *   @import 'tailwind';
+ *   @import 'maestro-react/tailwind';
+ *
+ * The semantic CSS variable layer from `base.css` is duplicated here
+ * verbatim so a host can adopt this preset without also pulling the
+ * base file. Hosts that want both can import `base.css` first; the
+ * `@layer` cascade ensures Tailwind utilities still take precedence
+ * over our component selectors.
+ *
+ * NOT a Tailwind plugin — that would force `tailwindcss` as a runtime
+ * dep. Plain CSS via `@layer` is enough to integrate cleanly.
+ */
+
+@layer components {
+    :root {
+        --maestro-surface-base: #ffffff;
+        --maestro-surface-raised: #ffffff;
+        --maestro-surface-muted: #f4f4f5;
+        --maestro-text-primary: #18181b;
+        --maestro-text-muted: #71717a;
+        --maestro-text-on-accent: #ffffff;
+        --maestro-border-subtle: rgba(24, 24, 27, 0.08);
+        --maestro-border-strong: rgba(24, 24, 27, 0.16);
+        --maestro-accent-bg: #2563eb;
+        --maestro-accent-fg: #ffffff;
+        --maestro-accent-bg-hover: #1d4ed8;
+        --maestro-danger-bg: #fef2f2;
+        --maestro-danger-fg: #b91c1c;
+        --maestro-radius-sm: 6px;
+        --maestro-radius-md: 10px;
+        --maestro-radius-lg: 16px;
+        --maestro-radius-pill: 999px;
+        --maestro-spacing-1: 4px;
+        --maestro-spacing-2: 8px;
+        --maestro-spacing-3: 12px;
+        --maestro-spacing-4: 16px;
+        --maestro-spacing-5: 20px;
+        --maestro-spacing-6: 24px;
+        --maestro-z-launcher: 40;
+        --maestro-z-sheet: 50;
+        --maestro-shadow-soft: 0 4px 12px rgba(0, 0, 0, 0.08);
+        --maestro-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.18);
+
+        --maestro-bubble-bg: var(--maestro-surface-muted);
+        --maestro-bubble-fg: var(--maestro-text-primary);
+        --maestro-bubble-user-bg: var(--maestro-accent-bg);
+        --maestro-bubble-user-fg: var(--maestro-accent-fg);
+        --maestro-bubble-radius: var(--maestro-radius-md);
+        --maestro-bubble-padding: var(--maestro-spacing-3) var(--maestro-spacing-4);
+
+        --maestro-launcher-bg: var(--maestro-accent-bg);
+        --maestro-launcher-fg: var(--maestro-accent-fg);
+        --maestro-launcher-size: 56px;
+        --maestro-launcher-offset: 24px;
+
+        --maestro-sheet-bg: var(--maestro-surface-base);
+        --maestro-sheet-width: 400px;
+        --maestro-sheet-height: 70vh;
+        --maestro-sheet-backdrop: rgba(0, 0, 0, 0.32);
+
+        --maestro-transition-fast: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+        --maestro-transition-medium: 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /*
+     * Component classes mirror the selectors in `base.css`. The
+     * `@layer components` wrapper is the only intentional difference —
+     * it places these rules BEFORE Tailwind utilities in the cascade,
+     * so `class="maestro-chat-bubble bg-red-100"` lets the utility
+     * win without `!important`.
+     */
+    .maestro-chat-launcher {
+        position: fixed;
+        bottom: var(--maestro-launcher-offset);
+        width: var(--maestro-launcher-size);
+        height: var(--maestro-launcher-size);
+        border: none;
+        border-radius: var(--maestro-radius-pill);
+        background: var(--maestro-launcher-bg);
+        color: var(--maestro-launcher-fg);
+        box-shadow: var(--maestro-shadow-strong);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        z-index: var(--maestro-z-launcher);
+    }
+    .maestro-chat-launcher--bottom-right { right: var(--maestro-launcher-offset); }
+    .maestro-chat-launcher--bottom-left { left: var(--maestro-launcher-offset); }
+
+    .maestro-chat-sheet-root {
+        position: fixed;
+        inset: 0;
+        z-index: var(--maestro-z-sheet);
+        pointer-events: none;
+    }
+    .maestro-chat-sheet__backdrop {
+        position: absolute;
+        inset: 0;
+        background: var(--maestro-sheet-backdrop);
+        pointer-events: auto;
+    }
+    .maestro-chat-sheet {
+        position: absolute;
+        background: var(--maestro-sheet-bg);
+        color: var(--maestro-text-primary);
+        box-shadow: var(--maestro-shadow-strong);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        pointer-events: auto;
+    }
+    .maestro-chat-sheet--right { top: 0; right: 0; height: 100vh; width: min(var(--maestro-sheet-width), 100vw); }
+    .maestro-chat-sheet--bottom { left: 0; right: 0; bottom: 0; height: var(--maestro-sheet-height); border-top-left-radius: var(--maestro-radius-lg); border-top-right-radius: var(--maestro-radius-lg); }
+
+    .maestro-chat-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; background: var(--maestro-surface-base); color: var(--maestro-text-primary); }
+    .maestro-chat-panel__body { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+    .maestro-chat-panel__input { display: flex; gap: var(--maestro-spacing-2); padding: var(--maestro-spacing-3); border-top: 1px solid var(--maestro-border-subtle); }
+
+    .maestro-chat-message-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--maestro-spacing-4); display: flex; flex-direction: column; gap: var(--maestro-spacing-3); }
+
+    .maestro-chat-bubble { background: var(--maestro-bubble-bg); color: var(--maestro-bubble-fg); border-radius: var(--maestro-bubble-radius); padding: var(--maestro-bubble-padding); max-width: 85%; align-self: flex-start; display: flex; flex-direction: column; gap: var(--maestro-spacing-2); }
+    .maestro-chat-bubble--user { background: var(--maestro-bubble-user-bg); color: var(--maestro-bubble-user-fg); align-self: flex-end; }
+
+    .maestro-chat-input__field, .maestro-chat-input__textarea { flex: 1 1 auto; padding: var(--maestro-spacing-2) var(--maestro-spacing-3); border: 1px solid var(--maestro-border-strong); border-radius: var(--maestro-radius-sm); font-size: 14px; }
+    .maestro-chat-input__submit { padding: 0 var(--maestro-spacing-4); border: none; background: var(--maestro-accent-bg); color: var(--maestro-accent-fg); border-radius: var(--maestro-radius-sm); cursor: pointer; }
+
+    .maestro-tool-call-card { border: 1px solid var(--maestro-border-subtle); border-radius: var(--maestro-radius-sm); background: var(--maestro-surface-raised); overflow: hidden; }
+    .maestro-citation-card { border: 1px solid var(--maestro-border-subtle); border-radius: var(--maestro-radius-sm); padding: var(--maestro-spacing-2) var(--maestro-spacing-3); background: var(--maestro-surface-raised); font-size: 12px; }
+}

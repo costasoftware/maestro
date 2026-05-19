@@ -4,13 +4,13 @@ React surface for the [Maestro](https://github.com/costasoftware/maestro) agent 
 
 ## Status
 
-`0.1.0-beta` — pre-release. P2 of a multi-phase rollout extracting React chat surfaces shared across multiple SaaS products with different backends (AI SDK v6, custom Node SSE, custom FastAPI SSE).
+`0.2.0-beta` — additive release. Adds UI primitives on top of the P2 hook + transports; no breaking changes from `0.1.0-beta`.
 
 | Phase | Ships |
 | --- | --- |
 | P1 | `MaestroChatProtocol` types + `MAESTRO_CHAT_PROTOCOL.md` spec |
-| **P2 (this release)** | `useMaestroChat()` hook + headless reducer + 3 transports (`httpSSETransport`, `aiSdkTransport`, `legacySseTransport`) |
-| P3 | Shared UI primitives (tool cards, citation chips, progress affordances, composed surfaces) |
+| P2 | `useMaestroChat()` hook + headless reducer + 3 transports (`httpSSETransport`, `aiSdkTransport`, `legacySseTransport`) |
+| **P3 (this release)** | Composed UI primitives — `<ChatLauncher>` + `<ChatSheet>` + `<ChatPanel>` shell trio, plus building blocks (`<MessageList>`, `<MessageBubble>`, `<ChatInput>`, `<ToolCallCard>`, `<CitationCard>`). Pure CSS theming via custom properties; optional Tailwind preset. |
 | P4 | Trading-rag native (FastAPI) adoption — validates the protocol against a non-TS implementation |
 
 ## Install
@@ -160,6 +160,122 @@ Production-shape event maps for two real consumers ship in `fixtures/`:
 
 - [`fixtures/numenion-wire.ts`](./fixtures/numenion-wire.ts) — numenion's `text_delta | tool_use | tool_result | error | done` schema
 - [`fixtures/trading-rag-wire.ts`](./fixtures/trading-rag-wire.ts) — trading-rag's `token | agent_start | agent_step | agent_result | sources | chart_*` schema, including synthetic-tool-call pattern for agent pipelines
+
+## Components
+
+Three top-level shell components compose into either a **bubble** (FAB → slide-in sheet) or a **page** (full-height) chat surface. There is no `mode` prop — composition is the choice.
+
+Drop the canonical CSS in once:
+
+```ts
+// Anywhere that runs at app boot (Next.js `app/layout.tsx`, Vite `main.tsx`, etc.)
+import 'maestro-react/styles.css'
+```
+
+### Bubble mode (8 lines of JSX)
+
+```tsx
+import { useState } from 'react'
+import {
+    ChatLauncher,
+    ChatPanel,
+    ChatSheet,
+    httpSSETransport,
+    useMaestroChat,
+} from 'maestro-react'
+
+function SupportBubble() {
+    const [open, setOpen] = useState(false)
+    const chat = useMaestroChat({ transport: httpSSETransport({ url: '/api/chat' }) })
+    return (
+        <>
+            <ChatLauncher onOpen={() => setOpen(true)} />
+            <ChatSheet open={open} onClose={() => setOpen(false)} title="Support">
+                <ChatPanel chat={chat} placeholder="Ask anything..." />
+            </ChatSheet>
+        </>
+    )
+}
+```
+
+### Page mode (4 lines of JSX)
+
+```tsx
+import { ChatPanel, httpSSETransport, useMaestroChat } from 'maestro-react'
+
+function ChatPage() {
+    const chat = useMaestroChat({ transport: httpSSETransport({ url: '/api/chat' }) })
+    return <ChatPanel chat={chat} placeholder="Ask anything..." />
+}
+```
+
+### Typed data renderers
+
+`<ChatPanel>` (and `<MessageBubble>`, `<MessageList>`) accept a typed `dataRenderers` registry. Pass the same `TDataMap` you used with `useMaestroChat` and the renderer's `value` prop is narrow per key:
+
+```tsx
+import {
+    ChatPanel,
+    type DataRendererRegistry,
+    useMaestroChat,
+} from 'maestro-react'
+
+interface SupportDataMap {
+    'ticket.summary': { id: string; title: string; status: 'open' | 'closed' }
+    'quota.warning': { remaining: number; limit: number }
+}
+
+const dataRenderers: DataRendererRegistry<SupportDataMap> = {
+    'ticket.summary': ({ value }) => (
+        <article className="ticket-card">
+            <strong>{value.id}</strong> — {value.title} <em>({value.status})</em>
+        </article>
+    ),
+    'quota.warning': ({ value }) => (
+        <p>{value.remaining} of {value.limit} calls remaining</p>
+    ),
+}
+
+function Page() {
+    const chat = useMaestroChat<SupportDataMap>({ transport })
+    return <ChatPanel chat={chat} dataRenderers={dataRenderers} />
+}
+```
+
+Unknown keys fall back to a `<pre>` JSON dump so no event silently disappears.
+
+### Override renderers for tool calls + citations
+
+```tsx
+<ChatPanel
+    chat={chat}
+    renderToolCall={call =>
+        call.name === 'lookupTicket' ? <TicketLookupCard call={call} /> : <ToolCallCard call={call} />
+    }
+    renderCitation={citation => <BrandedCitation citation={citation} />}
+/>
+```
+
+### Theming — CSS variables
+
+Override on `:root`, a wrapper, or any ancestor:
+
+```css
+.brand-theme {
+    --maestro-accent-bg: #16a34a;
+    --maestro-accent-bg-hover: #15803d;
+    --maestro-bubble-bg: #f8fafc;
+    --maestro-bubble-user-bg: var(--maestro-accent-bg);
+    --maestro-sheet-width: 480px;
+    --maestro-launcher-size: 64px;
+}
+```
+
+A Tailwind preset is shipped separately if you'd rather scope the CSS into a Tailwind `@layer components` — `import 'maestro-react/tailwind'` after your Tailwind imports.
+
+### Building blocks
+
+When the composed shells aren't enough, the underlying primitives are exported individually: `<MessageList>`, `<MessageBubble>`, `<ChatInput>`, `<ToolCallCard>`, `<CitationCard>`, plus the `useAutoScroll` hook. Mix them with your own layout — the `<ChatPanel>` source is the reference assembly.
 
 ## Protocol
 
