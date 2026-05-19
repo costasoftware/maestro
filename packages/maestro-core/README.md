@@ -167,7 +167,35 @@ await sendWhatsAppMessage({ to: from, body: result.text })
 // result.usage — combined totals (primary + synthesis, if enforce fired).
 // result.emptyRecovery — { triggered, attempted, mode } for dashboards.
 // result.finishReason — 'stop' | 'length' | 'tool-calls' | ...
+// result.tier — 'fast' | 'smart', as resolved by selectChatModel.
+// result.selectionReason — short reason string ('default-fast',
+//   'long-message', 'keyword:reschedule', 'force-override', ...).
+//   Pair with result.tier on your channel log line so tier-escalation
+//   dashboards can break down by why each turn upshifted.
 ```
+
+### Observability — `onError` for thrown tools
+
+Like `runChatTurn`, `runOneShotTurn` accepts an optional `onError` (`ToolExceptionHandler`) and threads it into `buildAiSdkTools`. The hook fires whenever a tool's `execute` throws an unhandled exception — the kernel still rethrows after capture so the AI SDK marks the tool result as `error` and the model sees the failure. Wire it to Sentry / Datadog for breadcrumbs without host-side wrapping:
+
+```ts
+import * as Sentry from '@sentry/node'
+
+await runOneShotTurn({
+    threadId,
+    ctx,
+    messages,
+    tools,
+    systemPrompt,
+    models,
+    ports,
+    onError: (error, tags) => {
+        Sentry.captureException(error, { tags })
+    },
+})
+```
+
+The hook is invoked for the primary `generateText` call AND the empty-recovery synthesis call — both share the same wrapped `ToolSet` so breadcrumbs are uniform across the two passes.
 
 ### Differences from `runChatTurn`
 

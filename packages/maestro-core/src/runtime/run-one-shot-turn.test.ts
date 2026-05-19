@@ -827,3 +827,115 @@ describe('runOneShotTurn → cost + telemetry', () => {
         expect(evt.tokensOut).toBe(10)
     })
 })
+
+describe('runOneShotTurn → onError + tier/selectionReason symmetry with runChatTurn', () => {
+    it('forwards onError into the ToolSet so thrown tools route to the hook', async () => {
+        // The kernel mocks generateText, so the model never calls the tool
+        // itself. We pull the wrapped ToolSet out of the generateText
+        // mock call and execute the tool directly — same code path the
+        // real AI SDK would hit, just sidestepping the LLM. If onError
+        // was forwarded into buildAiSdkTools, it fires here.
+        const onError = vi.fn()
+        const throwingTool = defineAgentTool<
+            z.ZodObject<Record<string, never>>,
+            { ok: true },
+            FakeCtx
+        >({
+            name: 'kaboom',
+            description: 'always throws',
+            transports: ['whatsapp'],
+            inputSchema: z.object({}),
+            execute: async () => {
+                throw new Error('tool exploded')
+            },
+        })
+
+        await runOneShotTurn(
+            makeArgs({
+                tools: [throwingTool],
+                onError,
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+
+        const call = generateTextMock.mock.calls[0]?.[0] as {
+            tools?: Record<string, { execute: (i: unknown, opts: object) => Promise<unknown> }>
+        }
+        expect(call.tools).toBeDefined()
+        const wrapped = call.tools?.kaboom
+        expect(wrapped).toBeDefined()
+
+        await expect(wrapped?.execute({}, {})).rejects.toThrow('tool exploded')
+        expect(onError).toHaveBeenCalledOnce()
+        const [errArg, tags] = onError.mock.calls[0] ?? []
+        expect(errArg).toBeInstanceOf(Error)
+        expect((errArg as Error).message).toBe('tool exploded')
+        expect(tags).toMatchObject({
+            toolName: 'kaboom',
+            transport: 'whatsapp',
+            tenantId: '42',
+        })
+    })
+
+    it('does not require onError — wrapped ToolSet still rethrows when omitted (zero behaviour change)', async () => {
+        const throwingTool = defineAgentTool<
+            z.ZodObject<Record<string, never>>,
+            { ok: true },
+            FakeCtx
+        >({
+            name: 'kaboom',
+            description: 'always throws',
+            transports: ['whatsapp'],
+            inputSchema: z.object({}),
+            execute: async () => {
+                throw new Error('tool exploded')
+            },
+        })
+
+        await runOneShotTurn(
+            makeArgs({
+                tools: [throwingTool],
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+
+        const call = generateTextMock.mock.calls[0]?.[0] as {
+            tools?: Record<string, { execute: (i: unknown, opts: object) => Promise<unknown> }>
+        }
+        await expect(call.tools?.kaboom?.execute({}, {})).rejects.toThrow('tool exploded')
+    })
+
+    it('returns the tier resolved by selectChatModel on the result', async () => {
+        // Short user message + first turn → selectChatModel returns 'fast'
+        // / 'default-fast'. Asserts the kernel plumbs selection.tier through
+        // to the public result (telemetry already has it via turn.finalized).
+        const result = await runOneShotTurn(
+            makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
+        )
+
+        expect(result.tier).toBe('fast')
+    })
+
+    it('returns the selector reason on the result so dashboards can group by reason', async () => {
+        const result = await runOneShotTurn(
+            makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
+        )
+
+        expect(typeof result.selectionReason).toBe('string')
+        expect(result.selectionReason.length).toBeGreaterThan(0)
+        // Short message + turn 1 → default fast path.
+        expect(result.selectionReason).toBe('default-fast')
+    })
+
+    it('respects modelHint.tier — result.tier matches the forced tier (smart) and reason flips to "forced"', async () => {
+        const result = await runOneShotTurn(
+            makeArgs({
+                modelHint: { tier: 'smart' },
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+
+        expect(result.tier).toBe('smart')
+        expect(result.selectionReason).toBe('forced')
+    })
+})
