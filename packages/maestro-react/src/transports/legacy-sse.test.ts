@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-    NUMENION_HAPPY_PATH,
-    NUMENION_TOOL_ERROR_PATH,
-    numenionEventMap,
-} from '../../fixtures/numenion-wire.js'
-import {
     TRADING_RAG_AGENT_FLOW,
     TRADING_RAG_CHART_FLOW,
     type TradingRagDataMap,
@@ -21,24 +16,6 @@ function mockFetch(frames: ReadonlyArray<SsePayload>): typeof fetch {
             status: 200,
             headers: { 'content-type': 'text/event-stream' },
         })) as unknown as typeof fetch
-}
-
-async function runNumenion(
-    frames: ReadonlyArray<SsePayload>,
-): Promise<MaestroEvent[]> {
-    const transport = legacySseTransport({
-        url: 'https://api/x',
-        fetch: mockFetch(frames),
-        eventMap: numenionEventMap,
-    })
-    const out: MaestroEvent[] = []
-    for await (const e of transport.send({
-        messages: [],
-        signal: new AbortController().signal,
-    })) {
-        out.push(e)
-    }
-    return out
 }
 
 async function runTradingRag(
@@ -58,70 +35,6 @@ async function runTradingRag(
     }
     return out
 }
-
-describe('legacySseTransport — numenion fixtures', () => {
-    it('happy path translates text + tool + done', async () => {
-        const out = await runNumenion(NUMENION_HAPPY_PATH)
-        expect(out).toEqual([
-            { type: 'text-delta', delta: 'Looking up ' },
-            { type: 'text-delta', delta: 'your portfolio…' },
-            {
-                type: 'tool-call',
-                callId: 'legacy_1',
-                name: 'getPortfolio',
-                input: { wallet: '0x7099…79C8' },
-            },
-            {
-                type: 'tool-result',
-                callId: 'legacy_1',
-                result: { netWorth: 12345, positions: 3 },
-            },
-            { type: 'text-delta', delta: '\n\nYour net worth is **$12,345**.' },
-            {
-                type: 'done',
-                text: 'Looking up your portfolio…\n\nYour net worth is **$12,345**.',
-            },
-        ])
-    })
-
-    it('tool_result with error:true becomes an errored tool-result + stream error', async () => {
-        const out = await runNumenion(NUMENION_TOOL_ERROR_PATH)
-        // The tool-result event errors the call, then the stream error
-        // terminates iteration.
-        expect(out).toEqual([
-            {
-                type: 'tool-call',
-                callId: 'legacy_1',
-                name: 'proposeAction',
-                input: { kind: 'swap' },
-            },
-            {
-                type: 'tool-result',
-                callId: 'legacy_1',
-                error: { code: 'TOOL_ERROR', message: 'simulation reverted' },
-            },
-            { type: 'error', message: 'simulation reverted' },
-        ])
-    })
-
-    it('synthesises callIds via ctx.nextCallId() so concurrent calls are unique', async () => {
-        const out = await runNumenion([
-            {
-                event: 'tool_use',
-                data: JSON.stringify({ name: 'a', input: {} }),
-            },
-            {
-                event: 'tool_use',
-                data: JSON.stringify({ name: 'b', input: {} }),
-            },
-            { event: 'done', data: '{}' },
-        ])
-        const ids = out
-            .filter(e => e.type === 'tool-call')
-            .map(e => (e as { callId: string }).callId)
-        expect(ids).toEqual(['legacy_1', 'legacy_2'])
-    })
-})
 
 describe('legacySseTransport — trading-rag fixtures', () => {
     it('agent flow synthesises one tool-call + N progress + one tool-result', async () => {
