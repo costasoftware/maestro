@@ -213,6 +213,38 @@ The top-level `attachments` mirrors the trailing user message's attachments. Bac
 
 `regenerate()` re-uses the trailing user message's attachments by default. Pass `regenerate({ attachments: [] })` to retry without media (useful when an upload failed and the user wants to drop it).
 
+#### Adoption gotchas
+
+Surfaced by the first consumer adopting the canonical `attachments` field ([`Alfredao/trading-rag#2`](https://github.com/Alfredao/trading-rag/pull/2)) on top of the protocol bump ([`costasoftware/maestro#20`](https://github.com/costasoftware/maestro/pull/20)). Watch for these when wiring `0.4.0-beta` into an existing app.
+
+-   **`bodyBuilder` signature is not uniform across transports.** `httpSSETransport` passes positional args `(messages, metadata, attachments)`; `aiSdkTransport` and `legacySseTransport` pass an object `(args)` with `args.messages` / `args.metadata` / `args.attachments`. Custom `bodyBuilder`s that don't accept the new field still type-check (it's optional), but you must explicitly fold `attachments` into your body shape — the default fold only kicks in when no custom `bodyBuilder` is supplied. **Heads-up:** the divergence is a v0.4 oversight; v0.5 will unify on the object-arg shape and deprecate the positional form.
+
+    ```ts
+    // httpSSETransport
+    bodyBuilder: (messages, metadata, attachments) => ({ messages, attachments, ...metadata })
+    // aiSdkTransport / legacySseTransport
+    bodyBuilder: ({ messages, metadata, attachments }) => ({ messages, attachments, ...metadata })
+    ```
+
+-   **Two parallel handles can coexist.** The canonical `attachments` field is for protocol portability and UI preview. If your backend already has a fast dispatch handle for the file (filesystem key, internal ID), keep both — don't refactor the backend to use the canonical URL as its primary key. Forcing HTTP re-fetch instead of direct access is a real perf hit.
+
+-   **Validator must allow empty text + attachments.** The protocol spec permits pure-media turns ("here's an image, what is this?"). Backends that previously required `message` non-empty must loosen to: text empty OR attachments non-empty. Otherwise the spec-permitted pure-media turn 422s.
+
+    ```ts
+    // Reject only when BOTH are empty.
+    if (!text?.trim() && !attachments?.length) return 422
+    ```
+
+-   **`message.attachments?` is optional.** The field doesn't appear on assistant messages or on user messages without uploads. Renderers must guard with `message.attachments?.map(...)`, not `message.attachments.map(...)`. Soft gap to watch: history-rehydration loaders must explicitly stamp `attachments` when restoring saved threads — otherwise old uploads disappear on reload.
+
+-   **`regenerate({})` re-uses trailing user attachments by default.** Matches the user-text reuse convention. To retry WITHOUT the failed upload, pass `regenerate({ attachments: [] })` explicitly. Easy to miss when wiring a "retry without media" UX.
+
+    ```ts
+    chat.regenerate({ attachments: [] }) // drop the failed media
+    ```
+
+-   **Lockfile bumps differ by package manager.** npm: `npm install` after the `package.json` bump suffices. pnpm: `pnpm install` plus a check of `pnpm-workspace.yaml` if the package gets resolved through a monorepo overlay.
+
 ## Transports
 
 All three transports share the `Transport<TDataMap>` contract: a single `send({ messages, signal })` method returning `AsyncIterable<MaestroEvent>`. Pick one based on what your backend already speaks.
