@@ -334,10 +334,9 @@ const transport = legacySseTransport({
 })
 ```
 
-Production-shape event maps for two real consumers ship in `fixtures/`:
+A production-shape event map ships in `fixtures/`:
 
-- [`fixtures/numenion-wire.ts`](./fixtures/numenion-wire.ts) — numenion's `text_delta | tool_use | tool_result | error | done` schema
-- [`fixtures/trading-rag-wire.ts`](./fixtures/trading-rag-wire.ts) — trading-rag's `token | agent_start | agent_step | agent_result | sources | chart_*` schema, including synthetic-tool-call pattern for agent pipelines
+- [`fixtures/trading-rag-wire.ts`](./fixtures/trading-rag-wire.ts) — trading-rag's pre-P4 `token | agent_start | agent_step | agent_result | sources | chart_*` schema, including synthetic-tool-call pattern for agent pipelines. Trading-rag has since migrated to the native `MaestroChatProtocol` via `httpSSETransport` ([`Alfredao/trading-rag#1`](https://github.com/Alfredao/trading-rag/pull/1)); the fixture remains as the canonical worked example for the legacy-adapter shape.
 
 ## Components
 
