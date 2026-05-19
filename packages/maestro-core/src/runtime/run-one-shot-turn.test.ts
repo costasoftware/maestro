@@ -324,6 +324,73 @@ describe('runOneShotTurn → generateText handoff (trap-guard regression)', () =
         expect(call.maxOutputTokens).toBeUndefined()
     })
 
+    it('forwards toolChoice "required" to the primary generateText call (WhatsApp stall-retry path)', async () => {
+        await runOneShotTurn(
+            makeArgs({
+                toolChoice: 'required',
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+        const call = generateTextMock.mock.calls[0]?.[0] as { toolChoice?: unknown }
+        expect(call.toolChoice).toBe('required')
+    })
+
+    it('forwards toolChoice "none" to the primary generateText call (forced text-only pass)', async () => {
+        await runOneShotTurn(
+            makeArgs({
+                toolChoice: 'none',
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+        const call = generateTextMock.mock.calls[0]?.[0] as { toolChoice?: unknown }
+        expect(call.toolChoice).toBe('none')
+    })
+
+    it('defaults toolChoice to "auto" when not supplied (zero behavior change for existing consumers)', async () => {
+        await runOneShotTurn(
+            makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
+        )
+        const call = generateTextMock.mock.calls[0]?.[0] as { toolChoice?: unknown }
+        expect(call.toolChoice).toBe('auto')
+    })
+
+    it('pins synthesis-call toolChoice to "none" regardless of primary-call toolChoice', async () => {
+        // Primary: empty text + tool call so enforce-mode synthesis fires.
+        generateTextMock.mockResolvedValueOnce(
+            defaultPrimary({
+                text: '',
+                toolCalls: [{ toolName: 'lookup', toolCallId: 'c1', input: { q: 'x' } }],
+                toolResults: [{ toolCallId: 'c1', output: { answered: true } }],
+                usage: { inputTokens: 10, outputTokens: 0 },
+                totalUsage: { inputTokens: 10, outputTokens: 0 },
+            })
+        )
+        generateTextMock.mockResolvedValueOnce(
+            defaultPrimary({
+                text: 'synthesised',
+                toolCalls: [],
+                toolResults: [],
+                usage: { inputTokens: 5, outputTokens: 3 },
+                totalUsage: { inputTokens: 5, outputTokens: 3 },
+            })
+        )
+
+        await runOneShotTurn(
+            makeArgs({
+                toolChoice: 'required',
+                emptyRecoveryMode: 'enforce',
+                emptyRecoveryFallback: 'fallback',
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+
+        expect(generateTextMock).toHaveBeenCalledTimes(2)
+        const primary = generateTextMock.mock.calls[0]?.[0] as { toolChoice?: unknown }
+        const synth = generateTextMock.mock.calls[1]?.[0] as { toolChoice?: unknown }
+        expect(primary.toolChoice).toBe('required')
+        expect(synth.toolChoice).toBe('none')
+    })
+
     it('persists pending → completed assistant turn rows', async () => {
         const ports = makePorts()
         await runOneShotTurn(
