@@ -59,3 +59,31 @@ export {
     type UseMaestroChatOptions,
     type UseMaestroChatReturn,
 } from './hook.js'
+
+// React UI primitives (P3). Both the composed shell trio
+// (`ChatLauncher` + `ChatSheet` + `ChatPanel`) and the underlying
+// building blocks (`MessageList`, `MessageBubble`, `ChatInput`,
+// `ToolCallCard`, `CitationCard`) ship from a single import surface.
+// Pure CSS + CSS-vars theming; no Radix / Tailwind / animation runtime.
+export {
+    ChatInput,
+    type ChatInputProps,
+    ChatLauncher,
+    type ChatLauncherProps,
+    ChatPanel,
+    type ChatPanelProps,
+    ChatSheet,
+    type ChatSheetProps,
+    CitationCard,
+    type CitationCardProps,
+    type DataRendererProps,
+    type DataRendererRegistry,
+    MessageBubble,
+    type MessageBubbleProps,
+    MessageList,
+    type MessageListProps,
+    ToolCallCard,
+    type ToolCallCardProps,
+    useAutoScroll,
+    type UseAutoScrollResult,
+} from './components/index.js'

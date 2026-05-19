@@ -1,6 +1,9 @@
 import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
 
+// Drop-in styles for the maestro-react UI primitives used on the page.
+import 'maestro-react/styles.css'
+
 export const metadata: Metadata = {
     title: 'Maestro example — support-bot',
     description: 'Multi-tenant customer-support bot validating maestro-core generality.',

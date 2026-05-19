@@ -1,7 +1,7 @@
 {
     "name": "maestro-react",
-    "version": "0.1.0-beta.0",
-    "description": "React surface for the Maestro agent runtime. P1 ships the MaestroChatProtocol — a wire-format-neutral event vocabulary shared across backends. Hooks, transports, and components land in later phases.",
+    "version": "0.2.0-beta.0",
+    "description": "React surface for the Maestro agent runtime. Ships the MaestroChatProtocol, a headless useMaestroChat hook with HTTP-SSE / AI-SDK / legacy-SSE transports, and a composed UI primitive set (ChatLauncher + ChatSheet + ChatPanel for bubble mode, ChatPanel standalone for page mode).",
     "license": "Apache-2.0",
     "author": "Costa Software",
     "homepage": "https://github.com/costasoftware/maestro/tree/main/packages/maestro-react#readme",
@@ -21,7 +21,9 @@
         "chat",
         "protocol",
         "sse",
-        "streaming"
+        "streaming",
+        "ui",
+        "components"
     ],
     "type": "module",
     "main": "./dist/index.js",
@@ -38,19 +40,25 @@
         "./transports": {
             "types": "./dist/transports/index.d.ts",
             "import": "./dist/transports/index.js"
-        }
+        },
+        "./components": {
+            "types": "./dist/components/index.d.ts",
+            "import": "./dist/components/index.js"
+        },
+        "./styles.css": "./dist/styles/base.css",
+        "./tailwind": "./dist/styles/tailwind-preset.css"
     },
     "files": [
         "dist",
         "README.md"
     ],
     "scripts": {
-        "build": "tsc -p tsconfig.build.json",
+        "build": "tsc -p tsconfig.build.json && node ./scripts/copy-styles.mjs",
         "test": "vitest run",
         "lint": "echo \"(lint not yet configured)\" && exit 0",
         "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.test.json",
         "clean": "rm -rf dist .turbo *.tsbuildinfo",
-        "prepublishOnly": "rm -rf dist .turbo *.tsbuildinfo && tsc -p tsconfig.build.json"
+        "prepublishOnly": "rm -rf dist .turbo *.tsbuildinfo && tsc -p tsconfig.build.json && node ./scripts/copy-styles.mjs"
     },
     "peerDependencies": {
         "ai": "^6.0.0",
@@ -71,6 +79,7 @@
     "devDependencies": {
         "@testing-library/dom": "^10.0.0",
         "@testing-library/react": "^16.0.0",
+        "@testing-library/user-event": "^14.5.0",
         "@types/node": "^20.0.0",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",

@@ -1,0 +1,634 @@
+/*
+ * maestro-react — canonical CSS for the P3 UI primitives.
+ *
+ * Designed to be drop-in: `import 'maestro-react/styles.css'` and the
+ * defaults look reasonable on any background. Hosts override via CSS
+ * custom properties on any ancestor element (root, body, parent
+ * container).
+ *
+ * Variable groups:
+ *
+ *   --maestro-surface-*   neutral surfaces (sheet bg, panel bg, etc.)
+ *   --maestro-text-*      text colors (primary, muted, on-accent)
+ *   --maestro-bubble-*    chat bubble appearance (user vs assistant)
+ *   --maestro-accent-*    interactive accent (send button, FAB)
+ *   --maestro-border-*    dividers / outlines
+ *   --maestro-radius-*    border radii
+ *   --maestro-spacing-*   inner padding scale
+ *   --maestro-z-*         stacking
+ *
+ * No Tailwind layer here — see `tailwind-preset.css` for the optional
+ * `@layer components` integration consumers can import separately.
+ */
+
+:root {
+    --maestro-surface-base: #ffffff;
+    --maestro-surface-raised: #ffffff;
+    --maestro-surface-muted: #f4f4f5;
+    --maestro-text-primary: #18181b;
+    --maestro-text-muted: #71717a;
+    --maestro-text-on-accent: #ffffff;
+    --maestro-border-subtle: rgba(24, 24, 27, 0.08);
+    --maestro-border-strong: rgba(24, 24, 27, 0.16);
+    --maestro-accent-bg: #2563eb;
+    --maestro-accent-fg: #ffffff;
+    --maestro-accent-bg-hover: #1d4ed8;
+    --maestro-danger-bg: #fef2f2;
+    --maestro-danger-fg: #b91c1c;
+    --maestro-radius-sm: 6px;
+    --maestro-radius-md: 10px;
+    --maestro-radius-lg: 16px;
+    --maestro-radius-pill: 999px;
+    --maestro-spacing-1: 4px;
+    --maestro-spacing-2: 8px;
+    --maestro-spacing-3: 12px;
+    --maestro-spacing-4: 16px;
+    --maestro-spacing-5: 20px;
+    --maestro-spacing-6: 24px;
+    --maestro-z-launcher: 40;
+    --maestro-z-sheet: 50;
+    --maestro-shadow-soft: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --maestro-shadow-strong: 0 12px 32px rgba(0, 0, 0, 0.18);
+
+    --maestro-bubble-bg: var(--maestro-surface-muted);
+    --maestro-bubble-fg: var(--maestro-text-primary);
+    --maestro-bubble-user-bg: var(--maestro-accent-bg);
+    --maestro-bubble-user-fg: var(--maestro-accent-fg);
+    --maestro-bubble-radius: var(--maestro-radius-md);
+    --maestro-bubble-padding: var(--maestro-spacing-3) var(--maestro-spacing-4);
+
+    --maestro-launcher-bg: var(--maestro-accent-bg);
+    --maestro-launcher-fg: var(--maestro-accent-fg);
+    --maestro-launcher-size: 56px;
+    --maestro-launcher-offset: 24px;
+
+    --maestro-sheet-bg: var(--maestro-surface-base);
+    --maestro-sheet-width: 400px;
+    --maestro-sheet-height: 70vh;
+    --maestro-sheet-backdrop: rgba(0, 0, 0, 0.32);
+
+    --maestro-transition-fast: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+    --maestro-transition-medium: 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* === Launcher (FAB) ============================================== */
+
+.maestro-chat-launcher {
+    position: fixed;
+    bottom: var(--maestro-launcher-offset);
+    width: var(--maestro-launcher-size);
+    height: var(--maestro-launcher-size);
+    border: none;
+    border-radius: var(--maestro-radius-pill);
+    background: var(--maestro-launcher-bg);
+    color: var(--maestro-launcher-fg);
+    box-shadow: var(--maestro-shadow-strong);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    z-index: var(--maestro-z-launcher);
+    transition: transform var(--maestro-transition-fast), background var(--maestro-transition-fast);
+}
+
+.maestro-chat-launcher:hover,
+.maestro-chat-launcher:focus-visible {
+    background: var(--maestro-accent-bg-hover);
+    transform: translateY(-2px);
+}
+
+.maestro-chat-launcher:focus-visible {
+    outline: 2px solid var(--maestro-accent-bg-hover);
+    outline-offset: 4px;
+}
+
+.maestro-chat-launcher--bottom-right {
+    right: var(--maestro-launcher-offset);
+}
+
+.maestro-chat-launcher--bottom-left {
+    left: var(--maestro-launcher-offset);
+}
+
+.maestro-chat-launcher__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.maestro-chat-launcher__badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: var(--maestro-radius-pill);
+    background: var(--maestro-danger-fg);
+    color: #fff;
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    font-weight: 600;
+}
+
+/* === Sheet ======================================================== */
+
+.maestro-chat-sheet-root {
+    position: fixed;
+    inset: 0;
+    z-index: var(--maestro-z-sheet);
+    pointer-events: none;
+}
+
+.maestro-chat-sheet__backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--maestro-sheet-backdrop);
+    pointer-events: auto;
+    animation: maestro-fade-in var(--maestro-transition-medium) both;
+}
+
+.maestro-chat-sheet {
+    position: absolute;
+    background: var(--maestro-sheet-bg);
+    color: var(--maestro-text-primary);
+    box-shadow: var(--maestro-shadow-strong);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    pointer-events: auto;
+    transition: transform var(--maestro-transition-medium);
+}
+
+.maestro-chat-sheet--right {
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: min(var(--maestro-sheet-width), 100vw);
+    border-left: 1px solid var(--maestro-border-subtle);
+    transform: translateX(100%);
+}
+
+.maestro-chat-sheet--bottom {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--maestro-sheet-height);
+    border-top: 1px solid var(--maestro-border-subtle);
+    border-top-left-radius: var(--maestro-radius-lg);
+    border-top-right-radius: var(--maestro-radius-lg);
+    transform: translateY(100%);
+}
+
+.maestro-chat-sheet--open {
+    transform: translate(0, 0);
+}
+
+.maestro-chat-sheet__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--maestro-spacing-3) var(--maestro-spacing-4);
+    border-bottom: 1px solid var(--maestro-border-subtle);
+    background: var(--maestro-surface-raised);
+    position: sticky;
+    top: 0;
+}
+
+.maestro-chat-sheet__title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--maestro-text-primary);
+}
+
+.maestro-chat-sheet__close {
+    background: transparent;
+    border: none;
+    color: var(--maestro-text-muted);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--maestro-radius-sm);
+}
+
+.maestro-chat-sheet__close:hover {
+    background: var(--maestro-surface-muted);
+    color: var(--maestro-text-primary);
+}
+
+.maestro-chat-sheet__close--floating {
+    position: absolute;
+    top: var(--maestro-spacing-2);
+    right: var(--maestro-spacing-2);
+    z-index: 1;
+}
+
+.maestro-chat-sheet__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* === Panel ======================================================== */
+
+.maestro-chat-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    background: var(--maestro-surface-base);
+    color: var(--maestro-text-primary);
+    font-family:
+        ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+}
+
+.maestro-chat-panel__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.maestro-chat-panel__empty {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--maestro-spacing-6);
+    color: var(--maestro-text-muted);
+    text-align: center;
+}
+
+.maestro-chat-panel__empty-default {
+    margin: 0;
+    font-style: italic;
+}
+
+.maestro-chat-panel__error {
+    margin: 0;
+    padding: var(--maestro-spacing-2) var(--maestro-spacing-4);
+    background: var(--maestro-danger-bg);
+    color: var(--maestro-danger-fg);
+    border-top: 1px solid var(--maestro-border-subtle);
+    font-size: 13px;
+}
+
+.maestro-chat-panel__input {
+    display: flex;
+    align-items: stretch;
+    gap: var(--maestro-spacing-2);
+    padding: var(--maestro-spacing-3);
+    border-top: 1px solid var(--maestro-border-subtle);
+    background: var(--maestro-surface-raised);
+}
+
+.maestro-chat-panel__stop {
+    border: 1px solid var(--maestro-border-strong);
+    background: var(--maestro-surface-muted);
+    color: var(--maestro-text-primary);
+    border-radius: var(--maestro-radius-sm);
+    padding: 0 var(--maestro-spacing-3);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.maestro-chat-panel__stop:hover {
+    background: var(--maestro-border-subtle);
+}
+
+.maestro-chat-panel__footer {
+    padding: var(--maestro-spacing-2) var(--maestro-spacing-4);
+    border-top: 1px solid var(--maestro-border-subtle);
+    background: var(--maestro-surface-raised);
+    color: var(--maestro-text-muted);
+    font-size: 12px;
+}
+
+/* === Message list + bubbles ====================================== */
+
+.maestro-chat-message-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--maestro-spacing-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--maestro-spacing-3);
+    scroll-behavior: auto;
+}
+
+.maestro-chat-message-list__item {
+    display: flex;
+    flex-direction: column;
+}
+
+.maestro-chat-message-list__anchor {
+    height: 1px;
+    flex-shrink: 0;
+}
+
+.maestro-chat-bubble {
+    background: var(--maestro-bubble-bg);
+    color: var(--maestro-bubble-fg);
+    border-radius: var(--maestro-bubble-radius);
+    padding: var(--maestro-bubble-padding);
+    max-width: 85%;
+    word-wrap: break-word;
+    align-self: flex-start;
+    display: flex;
+    flex-direction: column;
+    gap: var(--maestro-spacing-2);
+}
+
+.maestro-chat-bubble--user {
+    background: var(--maestro-bubble-user-bg);
+    color: var(--maestro-bubble-user-fg);
+    align-self: flex-end;
+}
+
+.maestro-chat-bubble--errored {
+    border: 1px solid var(--maestro-danger-fg);
+}
+
+.maestro-chat-bubble--aborted {
+    opacity: 0.7;
+}
+
+.maestro-chat-bubble__text {
+    white-space: pre-wrap;
+    margin: 0;
+}
+
+.maestro-chat-bubble__cursor {
+    display: inline-block;
+    margin-left: 2px;
+    color: var(--maestro-text-muted);
+    animation: maestro-blink 1s steps(2, start) infinite;
+}
+
+.maestro-chat-bubble__placeholder {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px 0;
+}
+
+.maestro-chat-bubble__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--maestro-text-muted);
+    animation: maestro-dot 1.2s ease-in-out infinite;
+}
+.maestro-chat-bubble__dot:nth-child(2) { animation-delay: 0.15s; }
+.maestro-chat-bubble__dot:nth-child(3) { animation-delay: 0.3s; }
+
+.maestro-chat-bubble__tools,
+.maestro-chat-bubble__citations,
+.maestro-chat-bubble__data {
+    display: flex;
+    flex-direction: column;
+    gap: var(--maestro-spacing-2);
+}
+
+.maestro-chat-bubble__error {
+    margin: 0;
+    color: var(--maestro-danger-fg);
+    font-size: 13px;
+}
+
+.maestro-chat-bubble__aborted {
+    margin: 0;
+    color: var(--maestro-text-muted);
+    font-style: italic;
+    font-size: 13px;
+}
+
+.maestro-chat-bubble__data-fallback {
+    background: rgba(0, 0, 0, 0.06);
+    padding: var(--maestro-spacing-2);
+    border-radius: var(--maestro-radius-sm);
+    font-size: 12px;
+    overflow-x: auto;
+    margin: 0;
+}
+
+/* === Input ======================================================== */
+
+.maestro-chat-input {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: stretch;
+    gap: var(--maestro-spacing-2);
+}
+
+.maestro-chat-input__field,
+.maestro-chat-input__textarea {
+    flex: 1 1 auto;
+    padding: var(--maestro-spacing-2) var(--maestro-spacing-3);
+    border: 1px solid var(--maestro-border-strong);
+    border-radius: var(--maestro-radius-sm);
+    font-size: 14px;
+    font-family: inherit;
+    background: var(--maestro-surface-base);
+    color: var(--maestro-text-primary);
+    outline: none;
+    resize: none;
+}
+
+.maestro-chat-input__field:focus,
+.maestro-chat-input__textarea:focus {
+    border-color: var(--maestro-accent-bg);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.maestro-chat-input__submit {
+    padding: 0 var(--maestro-spacing-4);
+    border: none;
+    background: var(--maestro-accent-bg);
+    color: var(--maestro-accent-fg);
+    border-radius: var(--maestro-radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--maestro-transition-fast);
+}
+
+.maestro-chat-input__submit:hover:not(:disabled) {
+    background: var(--maestro-accent-bg-hover);
+}
+
+.maestro-chat-input__submit:disabled {
+    background: var(--maestro-border-strong);
+    cursor: not-allowed;
+}
+
+/* === Tool call card ============================================== */
+
+.maestro-tool-call-card {
+    border: 1px solid var(--maestro-border-subtle);
+    border-radius: var(--maestro-radius-sm);
+    background: var(--maestro-surface-raised);
+    overflow: hidden;
+    color: var(--maestro-text-primary);
+}
+
+.maestro-tool-call-card--errored {
+    border-color: var(--maestro-danger-fg);
+}
+
+.maestro-tool-call-card__header {
+    display: flex;
+    align-items: center;
+    gap: var(--maestro-spacing-2);
+    width: 100%;
+    padding: var(--maestro-spacing-2) var(--maestro-spacing-3);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font-size: 13px;
+    color: inherit;
+}
+
+.maestro-tool-call-card__header:hover {
+    background: var(--maestro-surface-muted);
+}
+
+.maestro-tool-call-card__name {
+    font-weight: 600;
+    flex: 1 1 auto;
+}
+
+.maestro-tool-call-card__status {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: var(--maestro-radius-pill);
+    background: var(--maestro-surface-muted);
+    color: var(--maestro-text-muted);
+}
+
+.maestro-tool-call-card--success .maestro-tool-call-card__status {
+    background: rgba(34, 197, 94, 0.16);
+    color: #166534;
+}
+
+.maestro-tool-call-card--running .maestro-tool-call-card__status,
+.maestro-tool-call-card--pending .maestro-tool-call-card__status {
+    background: rgba(59, 130, 246, 0.16);
+    color: #1d4ed8;
+}
+
+.maestro-tool-call-card--errored .maestro-tool-call-card__status {
+    background: rgba(239, 68, 68, 0.16);
+    color: var(--maestro-danger-fg);
+}
+
+.maestro-tool-call-card__chevron {
+    color: var(--maestro-text-muted);
+    font-size: 12px;
+}
+
+.maestro-tool-call-card__error {
+    margin: 0;
+    padding: var(--maestro-spacing-2) var(--maestro-spacing-3);
+    color: var(--maestro-danger-fg);
+    font-size: 12px;
+    background: var(--maestro-danger-bg);
+}
+
+.maestro-tool-call-card__body {
+    padding: var(--maestro-spacing-3);
+    border-top: 1px solid var(--maestro-border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: var(--maestro-spacing-3);
+}
+
+.maestro-tool-call-card__section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--maestro-text-muted);
+    margin-bottom: 4px;
+}
+
+.maestro-tool-call-card__json {
+    background: var(--maestro-surface-muted);
+    padding: var(--maestro-spacing-2);
+    border-radius: var(--maestro-radius-sm);
+    font-size: 11px;
+    margin: 0;
+    overflow-x: auto;
+}
+
+/* === Citation card =============================================== */
+
+.maestro-citation-card {
+    border: 1px solid var(--maestro-border-subtle);
+    border-radius: var(--maestro-radius-sm);
+    padding: var(--maestro-spacing-2) var(--maestro-spacing-3);
+    background: var(--maestro-surface-raised);
+    color: var(--maestro-text-primary);
+    font-size: 12px;
+}
+
+.maestro-citation-card__title {
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.maestro-citation-card__link {
+    color: var(--maestro-accent-bg);
+    text-decoration: none;
+}
+
+.maestro-citation-card__link:hover {
+    text-decoration: underline;
+}
+
+.maestro-citation-card__snippet {
+    margin: 0;
+    color: var(--maestro-text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+/* === Animations ================================================== */
+
+@keyframes maestro-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes maestro-blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+@keyframes maestro-dot {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40% { transform: translateY(-3px); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .maestro-chat-launcher,
+    .maestro-chat-sheet,
+    .maestro-chat-input__submit {
+        transition: none;
+    }
+    .maestro-chat-bubble__cursor,
+    .maestro-chat-bubble__dot,
+    .maestro-chat-sheet__backdrop {
+        animation: none;
+    }
+}
