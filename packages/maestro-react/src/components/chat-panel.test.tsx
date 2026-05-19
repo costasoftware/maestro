@@ -19,6 +19,8 @@ function makeChat(
         abort: vi.fn(),
         reset: vi.fn(),
         append: vi.fn(),
+        setMessages: vi.fn(),
+        regenerate: vi.fn(),
         ...overrides,
     }
 }

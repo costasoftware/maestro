@@ -4,13 +4,14 @@ React surface for the [Maestro](https://github.com/costasoftware/maestro) agent 
 
 ## Status
 
-`0.2.0-beta` — additive release. Adds UI primitives on top of the P2 hook + transports; no breaking changes from `0.1.0-beta`.
+`0.3.0-beta` — additive release. Closes three API gaps surfaced by barbeiro's adoption (`barbeiro-app#403`): `send(text, { metadata })` now actually reaches the transport, `setMessages` rehydrates a saved thread without aborting in-flight streams, and `regenerate()` re-runs the last user turn without the `reset() + N×append()` dance. Protocol unchanged (`0.1.0-beta`); no breaking changes from `0.2.0-beta`.
 
 | Phase | Ships |
 | --- | --- |
 | P1 | `MaestroChatProtocol` types + `MAESTRO_CHAT_PROTOCOL.md` spec |
 | P2 | `useMaestroChat()` hook + headless reducer + 3 transports (`httpSSETransport`, `aiSdkTransport`, `legacySseTransport`) |
-| **P3 (this release)** | Composed UI primitives — `<ChatLauncher>` + `<ChatSheet>` + `<ChatPanel>` shell trio, plus building blocks (`<MessageList>`, `<MessageBubble>`, `<ChatInput>`, `<ToolCallCard>`, `<CitationCard>`). Pure CSS theming via custom properties; optional Tailwind preset. |
+| P3 | Composed UI primitives — `<ChatLauncher>` + `<ChatSheet>` + `<ChatPanel>` shell trio, plus building blocks (`<MessageList>`, `<MessageBubble>`, `<ChatInput>`, `<ToolCallCard>`, `<CitationCard>`). Pure CSS theming via custom properties; optional Tailwind preset. |
+| **P3.1 (this release)** | `send(text, { metadata })` end-to-end, `setMessages` rehydration primitive, `regenerate()` last-user-turn replay. |
 | P4 | Trading-rag native (FastAPI) adoption — validates the protocol against a non-TS implementation |
 
 ## Install
@@ -80,6 +81,70 @@ for (const entry of messages.at(-1)?.data ?? []) {
 
 Consumers who don't want types omit the generic — `data[].value` is `unknown`.
 
+### Send-time metadata
+
+`send(text, { metadata })` reaches the transport via `TransportSendArgs.metadata`. Built-in transports fold it into the default POST body as a top-level `metadata` field; if you pass a custom `bodyBuilder` it receives the metadata too — as the second argument for `httpSSETransport`, as `args.metadata` for `aiSdkTransport` and `legacySseTransport`.
+
+```tsx
+const { send } = useMaestroChat({
+    transport: httpSSETransport({
+        url: '/api/chat',
+        bodyBuilder: (messages, metadata) => ({
+            messages,
+            // Per-turn envelope — request id, surface, idempotency key, …
+            ...(metadata as Record<string, unknown> | undefined),
+        }),
+    }),
+})
+
+await send('what changed yesterday?', {
+    metadata: { requestId: crypto.randomUUID(), surface: 'admin' },
+})
+```
+
+Metadata is per-send, not per-message — it never persists on `MaestroMessage`. Use `append()` or rehydration if you need to keep the value around.
+
+### Thread rehydration via `setMessages`
+
+`setMessages(next)` replaces the message list wholesale. It deliberately does NOT abort the in-flight `AbortController`, does NOT clear `error`, and does NOT toggle `isLoading` — load a saved conversation while a different stream is mid-flight and the stream keeps going.
+
+```tsx
+const { messages, setMessages } = useMaestroChat({ transport })
+
+useEffect(() => {
+    let cancelled = false
+    void fetch(`/api/threads/${threadId}`)
+        .then(r => r.json() as Promise<MaestroMessage[]>)
+        .then(history => {
+            if (!cancelled) setMessages(history)
+        })
+    return () => {
+        cancelled = true
+    }
+}, [threadId, setMessages])
+```
+
+Use `reset()` instead when you want a full state wipe (clears messages back to `initialMessages`, aborts in-flight stream, clears error, clears `isLoading`).
+
+### Regenerate the last turn
+
+`regenerate({ metadata })` trims everything after the most recent user message and re-runs the transport against the trimmed history. The user message stays — only the stale assistant turn drops. If there is no user message in `messages`, it no-ops and logs a `console.warn`.
+
+```tsx
+const { regenerate, messages, isLoading } = useMaestroChat({ transport })
+
+return (
+    <button
+        disabled={isLoading || messages.length === 0}
+        onClick={() => regenerate({ metadata: { reason: 'user-retry' } })}
+    >
+        Retry last answer
+    </button>
+)
+```
+
+Like `send()`, `regenerate()` aborts any in-flight stream before starting the new one — two simultaneous streams would race. The new run uses a fresh `AbortController`.
+
 ## Transports
 
 All three transports share the `Transport<TDataMap>` contract: a single `send({ messages, signal })` method returning `AsyncIterable<MaestroEvent>`. Pick one based on what your backend already speaks.
@@ -94,9 +159,11 @@ import { httpSSETransport } from 'maestro-react'
 const transport = httpSSETransport({
     url: '/api/chat',
     headers: () => ({ authorization: `Bearer ${getToken()}` }),
-    bodyBuilder: messages => ({ thread: 'main', messages }),
+    bodyBuilder: (messages, metadata) => ({ thread: 'main', messages, metadata }),
 })
 ```
+
+`metadata` is the optional second argument passed by `useMaestroChat#send(text, { metadata })`. It is `undefined` when the caller did not supply any.
 
 ### `aiSdkTransport` — AI SDK v6 `UIMessageStream`
 

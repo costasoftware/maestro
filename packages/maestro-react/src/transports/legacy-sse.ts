@@ -63,6 +63,10 @@ export interface LegacySseTransportOptions<
      * Customise the POST body. Defaults to `{ messages }`. Backends
      * with their own envelope (numenion's UIMessage[] from useChat,
      * trading-rag's `{ message, conversation_id }`) override this.
+     *
+     * Per-send `metadata` from `useMaestroChat#send(text, { metadata })`
+     * is reachable via `args.metadata`. The default body folds it in as
+     * a top-level `metadata` field when present.
      */
     readonly bodyBuilder?: (args: TransportSendArgs<TDataMap>) => unknown
     readonly fetch?: typeof fetch
@@ -106,7 +110,9 @@ async function* iterate<TDataMap>(
     const body = JSON.stringify(
         opts.bodyBuilder
             ? opts.bodyBuilder(args)
-            : { messages: args.messages },
+            : args.metadata !== undefined
+              ? { messages: args.messages, metadata: args.metadata }
+              : { messages: args.messages },
     )
 
     const response = await fetchImpl(opts.url, {

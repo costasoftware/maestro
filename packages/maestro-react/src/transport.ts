@@ -28,6 +28,21 @@ export interface TransportSendArgs<
      * MUST honour this — at minimum by aborting the underlying fetch.
      */
     readonly signal: AbortSignal
+    /**
+     * Optional per-send envelope passed verbatim from
+     * `useMaestroChat#send(text, { metadata })` (or any other call site
+     * that originated the request — `regenerate()` forwards the
+     * metadata of the user turn it re-runs if any was attached).
+     *
+     * Transports SHOULD fold this into the wire body — for example as
+     * the second argument to `httpSSETransport`'s `bodyBuilder`, or
+     * via `args.metadata` inside `aiSdkTransport`'s / `legacySseTransport`'s
+     * `bodyBuilder({ messages, metadata })`. The library does not
+     * inspect the value; it is a side channel for callers that need to
+     * tag a single turn (e.g. AI SDK message metadata, request-scoped
+     * feature flags, idempotency keys).
+     */
+    readonly metadata?: unknown
 }
 
 export interface Transport<

@@ -185,6 +185,73 @@ describe('legacySseTransport — trading-rag fixtures', () => {
     })
 })
 
+describe('legacySseTransport — metadata forwarding', () => {
+    it('exposes metadata to bodyBuilder via args.metadata', async () => {
+        const seen: unknown[] = []
+        const fetchImpl = (async () =>
+            new Response(
+                sseStream([{ event: 'done', data: '{}' }]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )) as unknown as typeof fetch
+
+        const transport = legacySseTransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+            eventMap: {
+                done: () => ({ type: 'done' }),
+            },
+            bodyBuilder: args => {
+                seen.push(args.metadata)
+                return { messages: args.messages, m: args.metadata }
+            },
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            metadata: { conversationId: 'c-7' },
+        })) {
+            // drain
+        }
+        expect(seen).toEqual([{ conversationId: 'c-7' }])
+    })
+
+    it('default body folds metadata in when no bodyBuilder is provided', async () => {
+        const calls: { url: string; init: RequestInit }[] = []
+        const fetchImpl = (async (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return new Response(
+                sseStream([{ event: 'done', data: '{}' }]),
+                {
+                    status: 200,
+                    headers: { 'content-type': 'text/event-stream' },
+                },
+            )
+        }) as unknown as typeof fetch
+
+        const transport = legacySseTransport({
+            url: 'https://api/x',
+            fetch: fetchImpl,
+            eventMap: {
+                done: () => ({ type: 'done' }),
+            },
+        })
+        for await (const _ of transport.send({
+            messages: [],
+            signal: new AbortController().signal,
+            metadata: { conversationId: 'c-9' },
+        })) {
+            // drain
+        }
+        expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
+            messages: [],
+            metadata: { conversationId: 'c-9' },
+        })
+    })
+})
+
 describe('legacySseTransport — error paths', () => {
     it('unknown event names invoke onUnknownEvent and are skipped', async () => {
         const onUnknownEvent = vi.fn()

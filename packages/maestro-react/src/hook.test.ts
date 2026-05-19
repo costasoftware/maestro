@@ -17,12 +17,19 @@ function makeControlledTransport(): {
     transport: Transport<DataMap>
     push(event: MaestroEvent): Promise<void>
     finish(): void
+    reset(): void
     sentMessages(): ReadonlyArray<MaestroMessage<DataMap>>
+    sentMetadata(): unknown
+    sendCount(): number
+    lastSignal(): AbortSignal | null
 } {
     let resolve: ((value: IteratorResult<MaestroEvent>) => void) | null = null
-    const queue: MaestroEvent[] = []
+    let queue: MaestroEvent[] = []
     let done = false
     let captured: ReadonlyArray<MaestroMessage<DataMap>> = []
+    let capturedMetadata: unknown = undefined
+    let sendCalls = 0
+    let lastSignal: AbortSignal | null = null
 
     const flush = () => {
         if (!resolve) return
@@ -39,8 +46,16 @@ function makeControlledTransport(): {
     }
 
     const transport: Transport<DataMap> = {
-        send({ messages }) {
+        send({ messages, signal, metadata }) {
+            sendCalls += 1
             captured = messages
+            capturedMetadata = metadata
+            lastSignal = signal
+            // Each `send` resets the iterator queue + done flag so the
+            // hook's second invocation (e.g. via `regenerate`) doesn't
+            // inherit the prior stream's terminal state.
+            queue = []
+            done = false
             return {
                 [Symbol.asyncIterator]() {
                     return {
@@ -68,7 +83,15 @@ function makeControlledTransport(): {
             done = true
             flush()
         },
+        reset() {
+            queue = []
+            done = false
+            resolve = null
+        },
         sentMessages: () => captured,
+        sentMetadata: () => capturedMetadata,
+        sendCount: () => sendCalls,
+        lastSignal: () => lastSignal,
     }
 }
 
@@ -292,5 +315,284 @@ describe('useMaestroChat — empty / whitespace send', () => {
 
         expect(result.current.messages).toHaveLength(0)
         expect(sendSpy).not.toHaveBeenCalled()
+    })
+})
+
+describe('useMaestroChat — send metadata forwarding', () => {
+    it('threads opts.metadata through to transport.send', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('hi', {
+                metadata: { surface: 'admin', requestId: 'r-1' },
+            })
+            await Promise.resolve()
+        })
+
+        expect(ctl.sentMetadata()).toEqual({
+            surface: 'admin',
+            requestId: 'r-1',
+        })
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+
+    it('passes undefined metadata when none is supplied', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('hi')
+            await Promise.resolve()
+        })
+
+        expect(ctl.sentMetadata()).toBeUndefined()
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+})
+
+describe('useMaestroChat — setMessages rehydration', () => {
+    it('replaces the message list wholesale', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        const rehydrated: MaestroMessage<DataMap>[] = [
+            {
+                id: 'u1',
+                role: 'user',
+                text: 'hi',
+                toolCalls: [],
+                citations: [],
+                data: [],
+                status: 'complete',
+                createdAt: 1,
+                completedAt: 1,
+            },
+            {
+                id: 'a1',
+                role: 'assistant',
+                text: 'hello!',
+                toolCalls: [],
+                citations: [],
+                data: [],
+                status: 'complete',
+                createdAt: 2,
+                completedAt: 2,
+            },
+        ]
+
+        await act(async () => {
+            result.current.setMessages(rehydrated)
+        })
+
+        expect(result.current.messages).toEqual(rehydrated)
+    })
+
+    it('does NOT abort an in-flight stream when called', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('hi')
+            await Promise.resolve()
+        })
+        const signal = ctl.lastSignal()
+        expect(signal?.aborted).toBe(false)
+
+        await act(async () => {
+            // Rehydrate while a stream is in flight. The stream's
+            // abort signal MUST remain un-aborted — this is the whole
+            // point of `setMessages` over `reset()` + `append()`.
+            result.current.setMessages([])
+        })
+        expect(signal?.aborted).toBe(false)
+        expect(result.current.messages).toHaveLength(0)
+
+        // Let the in-flight stream complete cleanly so the test exits.
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+
+    it('does NOT touch error or isLoading state', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        // Trigger an error first.
+        await act(async () => {
+            void result.current.send('hi')
+        })
+        await act(async () => {
+            await ctl.push({ type: 'error', code: 'X', message: 'boom' })
+            ctl.finish()
+        })
+        await waitFor(() => {
+            expect(result.current.error?.code).toBe('X')
+        })
+
+        await act(async () => {
+            result.current.setMessages([])
+        })
+
+        // Error is preserved — `setMessages` is rehydration, not reset.
+        expect(result.current.error?.code).toBe('X')
+        expect(result.current.isLoading).toBe(false)
+    })
+})
+
+describe('useMaestroChat — regenerate', () => {
+    it('trims everything after the last user message and re-runs', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        // First turn — completes.
+        await act(async () => {
+            void result.current.send('hello')
+        })
+        await act(async () => {
+            await ctl.push({ type: 'text-delta', delta: 'hi' })
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false)
+        })
+        expect(result.current.messages).toHaveLength(2)
+        const sendsBefore = ctl.sendCount()
+
+        // Regenerate — should drop the assistant turn, keep the user.
+        await act(async () => {
+            void result.current.regenerate()
+            await Promise.resolve()
+        })
+
+        // Transport sees the user-only history.
+        const sentForRegen = ctl.sentMessages()
+        expect(sentForRegen).toHaveLength(1)
+        expect(sentForRegen[0]).toMatchObject({ role: 'user', text: 'hello' })
+        // Two messages again: same user + fresh pending assistant.
+        expect(result.current.messages).toHaveLength(2)
+        expect(result.current.messages[0]).toMatchObject({
+            role: 'user',
+            text: 'hello',
+        })
+        expect(result.current.messages[1]).toMatchObject({
+            role: 'assistant',
+            status: 'pending',
+        })
+        expect(ctl.sendCount()).toBe(sendsBefore + 1)
+
+        await act(async () => {
+            await ctl.push({ type: 'text-delta', delta: 'try 2' })
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+        await waitFor(() => {
+            expect(result.current.messages[1]?.text).toBe('try 2')
+        })
+    })
+
+    it('aborts an in-flight stream from the trimmed assistant turn before re-running', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('q')
+            await Promise.resolve()
+        })
+        const firstSignal = ctl.lastSignal()
+        expect(firstSignal?.aborted).toBe(false)
+
+        await act(async () => {
+            void result.current.regenerate()
+            await Promise.resolve()
+        })
+
+        // The PRIOR stream's signal must have aborted — otherwise the
+        // old stream would race the new one.
+        expect(firstSignal?.aborted).toBe(true)
+        // The new stream's signal is a fresh, un-aborted controller.
+        const secondSignal = ctl.lastSignal()
+        expect(secondSignal).not.toBe(firstSignal)
+        expect(secondSignal?.aborted).toBe(false)
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+    })
+
+    it('no-ops + warns when no user message exists', async () => {
+        const ctl = makeControlledTransport()
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            await result.current.regenerate()
+        })
+
+        expect(ctl.sendCount()).toBe(0)
+        expect(result.current.messages).toHaveLength(0)
+        expect(warn).toHaveBeenCalledTimes(1)
+        warn.mockRestore()
+    })
+
+    it('forwards opts.metadata to the regenerated transport call', async () => {
+        const ctl = makeControlledTransport()
+        const { result } = renderHook(() =>
+            useMaestroChat<DataMap>({ transport: ctl.transport }),
+        )
+
+        await act(async () => {
+            void result.current.send('hello')
+        })
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false)
+        })
+
+        await act(async () => {
+            void result.current.regenerate({
+                metadata: { reason: 'retry-after-rate-limit' },
+            })
+            await Promise.resolve()
+        })
+
+        expect(ctl.sentMetadata()).toEqual({
+            reason: 'retry-after-rate-limit',
+        })
+
+        await act(async () => {
+            await ctl.push({ type: 'done' })
+            ctl.finish()
+        })
     })
 })

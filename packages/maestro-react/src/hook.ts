@@ -2,7 +2,8 @@
  * `useMaestroChat` — the headless chat hook. Drives a `Transport`
  * implementation, folds emitted `MaestroEvent`s into `MaestroMessage`s,
  * exposes a minimal imperative API (`send` / `abort` / `reset` /
- * `append`) plus reactive `messages` / `isLoading` / `error`.
+ * `append` / `setMessages` / `regenerate`) plus reactive `messages` /
+ * `isLoading` / `error`.
  *
  * This file is the ONLY React-touching module in P2. Everything else
  * (protocol, reducer, transports) is framework-agnostic.
@@ -22,6 +23,14 @@
  *
  *  - SSR-safe: no DOM access at module scope. The hook itself doesn't
  *    touch DOM either — that's the transport's job.
+ *
+ *  - `setMessages` and `regenerate` were added in 0.3.0. `setMessages`
+ *    is a wholesale replacement that intentionally leaves the abort
+ *    controller alone — it is the rehydration primitive (loading a
+ *    saved thread should not cancel an unrelated in-flight stream).
+ *    `regenerate` trims after the last user turn and re-runs the
+ *    transport; it DOES cancel an in-flight controller because it is
+ *    itself starting a new stream, exactly like `send()`.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -58,6 +67,31 @@ export interface UseMaestroChatReturn<
     abort(): void
     reset(): void
     append(message: MaestroMessage<TDataMap>): void
+    /**
+     * Replace the message list wholesale. Intended for rehydrating a
+     * saved thread without the abort + replay dance `reset()` + N×
+     * `append()` would otherwise require.
+     *
+     * Does NOT touch the in-flight `AbortController`, does NOT clear
+     * `error`, and does NOT toggle `isLoading`. Use `reset()` if you
+     * want a full state wipe.
+     */
+    setMessages(next: ReadonlyArray<MaestroMessage<TDataMap>>): void
+    /**
+     * Re-run the transport against the conversation up to (and
+     * including) the most recent user message — everything after that
+     * user turn is dropped before the new request fires.
+     *
+     * If `messages` contains no user message, this is a no-op and a
+     * `console.warn` is emitted.
+     *
+     * Like `send()`, this aborts any in-flight stream BEFORE starting
+     * the new one (two simultaneous streams would race). Unlike
+     * `reset()`, it does NOT clear state beyond the trimmed assistant
+     * turn — `error` is cleared so the UI can show the fresh stream
+     * cleanly.
+     */
+    regenerate(opts?: { metadata?: unknown }): Promise<void>
 }
 
 const defaultGenerateId = (): string =>
@@ -69,7 +103,7 @@ export function useMaestroChat<
     const { transport, initialMessages, onError, onFinish } = opts
     const generateId = opts.generateId ?? defaultGenerateId
 
-    const [messages, setMessages] = useState<
+    const [messages, setMessagesState] = useState<
         ReadonlyArray<MaestroMessage<TDataMap>>
     >(() => initialMessages ?? [])
     const [isLoading, setIsLoading] = useState(false)
@@ -102,55 +136,41 @@ export function useMaestroChat<
         }
     }, [])
 
-    const send = useCallback(
-        async (text: string): Promise<void> => {
-            const trimmed = text.trim()
-            if (trimmed.length === 0) return
-
-            // Cancel any in-flight stream first. If the caller has not
-            // yet awaited the previous `send()`, this is the only way
-            // to guarantee no overlap.
+    /**
+     * Core stream runner shared by `send` and `regenerate`. Owns the
+     * abort-controller swap, the loading flag, and the post-stream
+     * `onFinish` / `onError` dispatch. Callers prepare the snapshot
+     * (history + user + pending assistant) and pass the assistant id
+     * that should absorb the incoming events.
+     */
+    const runStream = useCallback(
+        async (
+            transportMessages: ReadonlyArray<MaestroMessage<TDataMap>>,
+            assistantId: string,
+            metadata: unknown,
+        ): Promise<void> => {
             controllerRef.current?.abort()
             const controller = new AbortController()
             controllerRef.current = controller
 
-            const userMessage = createUserMessage<TDataMap>({
-                id: generateId(),
-                text: trimmed,
-            })
-            const assistantId = generateId()
-            const assistantMessage = createAssistantMessage<TDataMap>({
-                id: assistantId,
-            })
-
-            // Capture the snapshot the transport sees (history + user
-            // turn) BEFORE we touch React state — `setMessages` is async.
-            let snapshot: ReadonlyArray<MaestroMessage<TDataMap>> = []
-            setMessages(prev => {
-                snapshot = [...prev, userMessage, assistantMessage]
-                return snapshot
-            })
             setError(null)
             setIsLoading(true)
-
-            // Strip the placeholder assistant from the snapshot the
-            // transport sees — it's still pending, no point sending it.
-            const transportMessages = snapshot.slice(0, -1)
 
             try {
                 const iterable = transport.send({
                     messages: transportMessages,
                     signal: controller.signal,
+                    metadata,
                 })
                 for await (const event of iterable) {
                     if (controller.signal.aborted) break
-                    setMessages(prev =>
+                    setMessagesState(prev =>
                         applyEventInList(prev, assistantId, event),
                     )
                 }
             } catch (err) {
                 const maestroError = toMaestroError(err)
-                setMessages(prev =>
+                setMessagesState(prev =>
                     failMessageInList(prev, assistantId, maestroError),
                 )
                 setError(maestroError)
@@ -168,7 +188,7 @@ export function useMaestroChat<
             // Compute the final assistant message after all events
             // applied. Fire onFinish only on a clean completion — not
             // abort / error.
-            setMessages(prev => {
+            setMessagesState(prev => {
                 const final = prev.find(m => m.id === assistantId)
                 if (final && final.status === 'complete') {
                     queueMicrotask(() => onFinishRef.current?.(final))
@@ -180,7 +200,41 @@ export function useMaestroChat<
                 return prev
             })
         },
-        [transport, generateId],
+        [transport],
+    )
+
+    const send = useCallback(
+        async (
+            text: string,
+            sendOpts?: { metadata?: unknown },
+        ): Promise<void> => {
+            const trimmed = text.trim()
+            if (trimmed.length === 0) return
+
+            const userMessage = createUserMessage<TDataMap>({
+                id: generateId(),
+                text: trimmed,
+            })
+            const assistantId = generateId()
+            const assistantMessage = createAssistantMessage<TDataMap>({
+                id: assistantId,
+            })
+
+            // Capture the snapshot the transport sees (history + user
+            // turn) BEFORE we touch React state — `setMessages` is async.
+            let snapshot: ReadonlyArray<MaestroMessage<TDataMap>> = []
+            setMessagesState(prev => {
+                snapshot = [...prev, userMessage, assistantMessage]
+                return snapshot
+            })
+
+            // Strip the placeholder assistant from the snapshot the
+            // transport sees — it's still pending, no point sending it.
+            const transportMessages = snapshot.slice(0, -1)
+
+            await runStream(transportMessages, assistantId, sendOpts?.metadata)
+        },
+        [generateId, runStream],
     )
 
     const abort = useCallback(() => {
@@ -189,7 +243,7 @@ export function useMaestroChat<
         controller.abort()
         controllerRef.current = null
         setIsLoading(false)
-        setMessages(prev => {
+        setMessagesState(prev => {
             // Mark the trailing pending/streaming assistant turn as
             // aborted. This is what the UI listens to.
             const last = prev[prev.length - 1]
@@ -209,21 +263,102 @@ export function useMaestroChat<
     const reset = useCallback(() => {
         controllerRef.current?.abort()
         controllerRef.current = null
-        setMessages(initialMessages ?? [])
+        setMessagesState(initialMessages ?? [])
         setError(null)
         setIsLoading(false)
     }, [initialMessages])
 
     const append = useCallback(
         (message: MaestroMessage<TDataMap>) => {
-            setMessages(prev => [...prev, message])
+            setMessagesState(prev => [...prev, message])
         },
         [],
     )
 
+    /**
+     * Replace the message list wholesale. Deliberately does NOT call
+     * `controllerRef.current?.abort()` — a thread rehydration should
+     * not cancel an unrelated in-flight stream that the caller might
+     * still be awaiting via `onFinish`.
+     */
+    const setMessages = useCallback(
+        (next: ReadonlyArray<MaestroMessage<TDataMap>>) => {
+            setMessagesState(next)
+        },
+        [],
+    )
+
+    // `regenerate` needs the latest message snapshot to find the
+    // trailing user turn. React state updates batch, so reading
+    // `messages` from the closure would risk staleness if the consumer
+    // calls `regenerate()` directly after an `append()`. We mirror the
+    // state into a ref kept in sync via the messages effect below.
+    const messagesRef = useRef<ReadonlyArray<MaestroMessage<TDataMap>>>(
+        messages,
+    )
+    useEffect(() => {
+        messagesRef.current = messages
+    }, [messages])
+
+    const regenerate = useCallback(
+        async (regenOpts?: { metadata?: unknown }): Promise<void> => {
+            const current = messagesRef.current
+            const lastUserIdx = findLastIndex(
+                current,
+                m => m.role === 'user',
+            )
+            if (lastUserIdx === -1) {
+                // eslint-disable-next-line no-console
+                console.warn(
+                    'useMaestroChat: regenerate() called with no user message in history; no-op.',
+                )
+                return
+            }
+            // Transport sees history up to + including the user turn,
+            // mirroring `send()`'s convention.
+            const transportMessages = current.slice(0, lastUserIdx + 1)
+            const assistantId = generateId()
+            const assistantMessage = createAssistantMessage<TDataMap>({
+                id: assistantId,
+            })
+            const nextMessages = [...transportMessages, assistantMessage]
+            // Apply the trimmed + fresh assistant snapshot before we
+            // start the stream so the UI immediately drops the stale
+            // assistant turn.
+            setMessagesState(nextMessages)
+
+            await runStream(
+                transportMessages,
+                assistantId,
+                regenOpts?.metadata,
+            )
+        },
+        [generateId, runStream],
+    )
+
     return useMemo(
-        () => ({ messages, isLoading, error, send, abort, reset, append }),
-        [messages, isLoading, error, send, abort, reset, append],
+        () => ({
+            messages,
+            isLoading,
+            error,
+            send,
+            abort,
+            reset,
+            append,
+            setMessages,
+            regenerate,
+        }),
+        [
+            messages,
+            isLoading,
+            error,
+            send,
+            abort,
+            reset,
+            append,
+            setMessages,
+            regenerate,
+        ],
     )
 }
 
@@ -253,6 +388,21 @@ function failMessageInList<TDataMap>(
     const next = list.slice()
     next[idx] = failMessage(existing, error)
     return next
+}
+
+/**
+ * `Array#findLastIndex` polyfill — keep this hook ES2022-safe without
+ * pulling in a lib bump. Drop once we require ES2023.
+ */
+function findLastIndex<T>(
+    arr: ReadonlyArray<T>,
+    predicate: (item: T) => boolean,
+): number {
+    for (let i = arr.length - 1; i >= 0; i -= 1) {
+        const item = arr[i]
+        if (item !== undefined && predicate(item)) return i
+    }
+    return -1
 }
 
 function toMaestroError(error: unknown): MaestroError {
