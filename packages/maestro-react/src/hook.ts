@@ -118,6 +118,22 @@ export function useMaestroChat<
     const [isLoading, setIsLoading] = useState(false)
     const [error, setError] = useState<MaestroError | null>(null)
 
+    // Mirror `messages` into a ref so `send` / `regenerate` can read the
+    // latest committed snapshot synchronously without depending on the
+    // `setMessagesState(prev => …)` updater being called eagerly. React
+    // 18+ concurrent rendering defers updater functions to the commit
+    // phase, so the prior pattern of capturing `prev` via closure
+    // assignment yielded an empty snapshot on the first turn of any
+    // fresh thread (no prior `messages`, no append yet → updater not yet
+    // invoked when the next line read the local variable). Hoisted above
+    // `send` so the closure resolves cleanly without TDZ warnings.
+    const messagesRef = useRef<ReadonlyArray<MaestroMessage<TDataMap>>>(
+        messages,
+    )
+    useEffect(() => {
+        messagesRef.current = messages
+    }, [messages])
+
     // We hold the in-flight controller in a ref so a new send() can
     // abort the previous request without forcing the prior `send()`
     // promise to throw on its own — the AbortSignal is the canonical
@@ -241,13 +257,19 @@ export function useMaestroChat<
                 id: assistantId,
             })
 
-            // Capture the snapshot the transport sees (history + user
-            // turn) BEFORE we touch React state — `setMessages` is async.
-            let snapshot: ReadonlyArray<MaestroMessage<TDataMap>> = []
-            setMessagesState(prev => {
-                snapshot = [...prev, userMessage, assistantMessage]
-                return snapshot
-            })
+            // Capture the snapshot the transport sees synchronously from
+            // the messages ref (kept in sync with the React state via the
+            // hoisted effect above). Reading the ref instead of the prior
+            // `setMessagesState(prev => …)` closure capture avoids the
+            // React-18 race where the updater is deferred to commit, which
+            // left `transportMessages` empty on the first turn of any
+            // fresh thread.
+            const snapshot: ReadonlyArray<MaestroMessage<TDataMap>> = [
+                ...messagesRef.current,
+                userMessage,
+                assistantMessage,
+            ]
+            setMessagesState(snapshot)
 
             // Strip the placeholder assistant from the snapshot the
             // transport sees — it's still pending, no point sending it.
@@ -313,18 +335,6 @@ export function useMaestroChat<
         },
         [],
     )
-
-    // `regenerate` needs the latest message snapshot to find the
-    // trailing user turn. React state updates batch, so reading
-    // `messages` from the closure would risk staleness if the consumer
-    // calls `regenerate()` directly after an `append()`. We mirror the
-    // state into a ref kept in sync via the messages effect below.
-    const messagesRef = useRef<ReadonlyArray<MaestroMessage<TDataMap>>>(
-        messages,
-    )
-    useEffect(() => {
-        messagesRef.current = messages
-    }, [messages])
 
     const regenerate = useCallback(
         async (regenOpts?: {
