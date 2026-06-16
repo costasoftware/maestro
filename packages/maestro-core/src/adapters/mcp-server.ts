@@ -127,21 +127,18 @@ export function registerMcpTools<TCtx extends BaseToolContext<string>>(
 
 /**
  * The MCP SDK's `registerTool` wants the input schema as a raw Zod
- * shape (`{ key: z.foo() }`), not the wrapped `z.object`. We crack
- * open the internal `_def.shape()` getter to extract it.
+ * shape (`{ key: z.foo() }`), not the wrapped `z.object`. A `ZodObject`
+ * exposes that raw shape via the public `.shape` getter, which exists in
+ * both zod v3 and v4 — so we read it directly instead of the internal
+ * `_def.shape()` (the `_def` field moved to `_zod.def` in v4, which would
+ * break this for zod-4 consumers).
  *
  * Unknown / non-object schemas fall through to an empty shape — the
  * MCP server will accept any input for tools that don't declare one,
  * matching the behaviour of barbeiro's original adapter.
  */
 function zodToRawShape(schema: unknown): Record<string, ZodTypeAny> {
-    const s = schema as {
-        _def?: { shape?: () => Record<string, ZodTypeAny> }
-        shape?: Record<string, ZodTypeAny>
-    }
-    if (s && typeof s._def?.shape === 'function') {
-        return s._def.shape()
-    }
+    const s = schema as { shape?: Record<string, ZodTypeAny> }
     if (s && typeof s.shape === 'object' && s.shape !== null) {
         return s.shape
     }

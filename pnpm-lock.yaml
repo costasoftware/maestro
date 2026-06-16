@@ -19,10 +19,10 @@ importers:
     dependencies:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
-        version: 3.0.78(zod@3.25.76)
+        version: 3.0.78(zod@4.4.3)
       ai:
         specifier: ^6.0.168
-        version: 6.0.184(zod@3.25.76)
+        version: 6.0.184(zod@4.4.3)
       maestro-core:
         specifier: workspace:*
         version: link:../../packages/maestro-core
@@ -36,8 +36,8 @@ importers:
         specifier: ^19.0.0
         version: 19.2.6(react@19.2.6)
       zod:
-        specifier: ^3.25.76
-        version: 3.25.76
+        specifier: ^4.0.0
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -56,13 +56,13 @@ importers:
     dependencies:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
-        version: 3.0.78(zod@3.25.76)
+        version: 3.0.78(zod@4.4.3)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
-        version: 1.29.0(zod@3.25.76)
+        version: 1.29.0(zod@4.4.3)
       ai:
         specifier: ^6.0.168
-        version: 6.0.184(zod@3.25.76)
+        version: 6.0.184(zod@4.4.3)
       maestro-core:
         specifier: workspace:*
         version: link:../../packages/maestro-core
@@ -79,8 +79,8 @@ importers:
         specifier: ^19.0.0
         version: 19.2.6(react@19.2.6)
       zod:
-        specifier: ^3.25.76
-        version: 3.25.76
+        specifier: ^4.0.0
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -101,16 +101,16 @@ importers:
     devDependencies:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
-        version: 3.0.78(zod@3.25.76)
+        version: 3.0.78(zod@4.4.3)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
-        version: 1.29.0(zod@3.25.76)
+        version: 1.29.0(zod@4.4.3)
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19
       ai:
         specifier: ^6.0.0
-        version: 6.0.184(zod@3.25.76)
+        version: 6.0.184(zod@4.4.3)
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -118,8 +118,8 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)
       zod:
-        specifier: ^3.25.0
-        version: 3.25.76
+        specifier: ^4.0.0
+        version: 4.4.3
 
   packages/maestro-eval: {}
 
@@ -127,13 +127,13 @@ importers:
     devDependencies:
       '@ai-sdk/anthropic':
         specifier: ^3.0.71
-        version: 3.0.78(zod@3.25.76)
+        version: 3.0.78(zod@4.4.3)
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19
       ai:
         specifier: ^6.0.0
-        version: 6.0.184(zod@3.25.76)
+        version: 6.0.184(zod@4.4.3)
       maestro-core:
         specifier: workspace:*
         version: link:../maestro-core
@@ -144,8 +144,8 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)(jsdom@25.0.1)
       zod:
-        specifier: ^3.25.0
-        version: 3.25.76
+        specifier: ^4.0.0
+        version: 4.4.3
 
   packages/maestro-mcp: {}
 
@@ -153,7 +153,7 @@ importers:
     dependencies:
       ai:
         specifier: ^6.0.0
-        version: 6.0.184(zod@3.25.76)
+        version: 6.0.184(zod@4.4.3)
     devDependencies:
       '@testing-library/dom':
         specifier: ^10.0.0
@@ -1690,30 +1690,30 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
 
-  '@ai-sdk/anthropic@3.0.78(zod@3.25.76)':
+  '@ai-sdk/anthropic@3.0.78(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.10
-      '@ai-sdk/provider-utils': 4.0.27(zod@3.25.76)
-      zod: 3.25.76
+      '@ai-sdk/provider-utils': 4.0.27(zod@4.4.3)
+      zod: 4.4.3
 
-  '@ai-sdk/gateway@3.0.115(zod@3.25.76)':
+  '@ai-sdk/gateway@3.0.115(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.10
-      '@ai-sdk/provider-utils': 4.0.27(zod@3.25.76)
+      '@ai-sdk/provider-utils': 4.0.27(zod@4.4.3)
       '@vercel/oidc': 3.2.0
-      zod: 3.25.76
+      zod: 4.4.3
 
-  '@ai-sdk/provider-utils@4.0.27(zod@3.25.76)':
+  '@ai-sdk/provider-utils@4.0.27(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.10
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.0.8
-      zod: 3.25.76
+      zod: 4.4.3
 
   '@ai-sdk/provider@3.0.10':
     dependencies:
@@ -1934,7 +1934,7 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
       '@hono/node-server': 1.19.14(hono@4.12.19)
       ajv: 8.20.0
@@ -1951,8 +1951,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
     transitivePeerDependencies:
       - supports-color
 
@@ -2187,13 +2187,13 @@ snapshots:
 
   agent-base@7.1.4: {}
 
-  ai@6.0.184(zod@3.25.76):
+  ai@6.0.184(zod@4.4.3):
     dependencies:
-      '@ai-sdk/gateway': 3.0.115(zod@3.25.76)
+      '@ai-sdk/gateway': 3.0.115(zod@4.4.3)
       '@ai-sdk/provider': 3.0.10
-      '@ai-sdk/provider-utils': 4.0.27(zod@3.25.76)
+      '@ai-sdk/provider-utils': 4.0.27(zod@4.4.3)
       '@opentelemetry/api': 1.9.1
-      zod: 3.25.76
+      zod: 4.4.3
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
@@ -3089,8 +3089,8 @@ snapshots:
 
   xmlchars@2.2.0: {}
 
-  zod-to-json-schema@3.25.2(zod@3.25.76):
+  zod-to-json-schema@3.25.2(zod@4.4.3):
     dependencies:
-      zod: 3.25.76
+      zod: 4.4.3
 
-  zod@3.25.76: {}
+  zod@4.4.3: {}

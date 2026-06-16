@@ -8,14 +8,15 @@ import type { ExampleCtx } from './context.js'
  * zero-side-effect path: no I/O, no port use, just transforms input
  * and returns an `ok` envelope.
  */
-export const echoTool = defineAgentTool<z.ZodObject<{ msg: z.ZodString }>, { echoed: string }, ExampleCtx>({
+const echoInput = z.object({ msg: z.string().min(1).max(500) })
+export const echoTool = defineAgentTool<typeof echoInput, { echoed: string }, ExampleCtx>({
     name: 'echo',
     description:
         'Echoes the user message back in upper case. Useful for confirming the tool-calling pipeline is wired.',
     transports: ['chat'],
     kind: 'read',
     costBand: 'cheap',
-    inputSchema: z.object({ msg: z.string().min(1).max(500) }),
+    inputSchema: echoInput,
     execute: async (input) => ok({ echoed: input.msg.toUpperCase() }),
 })
 
@@ -23,18 +24,15 @@ export const echoTool = defineAgentTool<z.ZodObject<{ msg: z.ZodString }>, { ech
  * Pure-compute tool with deliberate error branches — shows the
  * envelope-error path the model can recover from.
  */
-export const addNumbersTool = defineAgentTool<
-    z.ZodObject<{ a: z.ZodNumber; b: z.ZodNumber }>,
-    { sum: number },
-    ExampleCtx
->({
+const addNumbersInput = z.object({ a: z.number(), b: z.number() })
+export const addNumbersTool = defineAgentTool<typeof addNumbersInput, { sum: number }, ExampleCtx>({
     name: 'addNumbers',
     description:
         'Adds two finite real numbers. Returns NOT_FINITE if either input is NaN or Infinity, OVERFLOW if the sum exceeds Number.MAX_SAFE_INTEGER.',
     transports: ['chat'],
     kind: 'read',
     costBand: 'cheap',
-    inputSchema: z.object({ a: z.number(), b: z.number() }),
+    inputSchema: addNumbersInput,
     execute: async (input) => {
         if (!Number.isFinite(input.a) || !Number.isFinite(input.b)) {
             return err('NOT_FINITE', 'inputs must be finite numbers')
@@ -52,14 +50,19 @@ export const addNumbersTool = defineAgentTool<
  * formatting. Real-product tools follow the same pattern: pull what
  * they need from `ctx`, never close over module-level state.
  */
-export const getTimeTool = defineAgentTool<z.ZodObject<Record<string, never>>, { iso: string; readable: string }, ExampleCtx>({
+const getTimeInput = z.object({})
+export const getTimeTool = defineAgentTool<
+    typeof getTimeInput,
+    { iso: string; readable: string },
+    ExampleCtx
+>({
     name: 'getTime',
     description:
         'Returns the current time as both an ISO 8601 timestamp and a human-readable string localised to the user timezone.',
     transports: ['chat'],
     kind: 'read',
     costBand: 'cheap',
-    inputSchema: z.object({}),
+    inputSchema: getTimeInput,
     execute: async (_input, ctx) => {
         const now = new Date()
         const readable = new Intl.DateTimeFormat('en-US', {
