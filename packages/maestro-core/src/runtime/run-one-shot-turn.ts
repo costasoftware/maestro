@@ -479,9 +479,11 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
 
     // ── 7. Empty-recovery classifier ────────────────────────────────
     const primaryText = typeof primaryResult.text === 'string' ? primaryResult.text : ''
-    const primaryToolCalls = Array.isArray(primaryResult.toolCalls)
-        ? primaryResult.toolCalls
-        : []
+    // Every tool call of the turn, not just the final step's — see
+    // `summariseToolCalls`. Both the classifier below and the quota
+    // meter further down count invocations, so both were undercounting
+    // (to zero, for any turn that ended with text).
+    const primaryToolCalls = summariseToolCalls(primaryResult)
     const isToolLoopNoText = primaryText.trim().length === 0 && primaryToolCalls.length > 0
     const recoveryDecision = decideEmptyRecovery({
         mode: recoveryMode,
@@ -567,7 +569,7 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
                 ? `${primaryText}\n\n${synthesisText}`
                 : synthesisText
             : primaryText
-    const toolCallSummary = summariseToolCalls(primaryResult)
+    const toolCallSummary = primaryToolCalls
 
     // ── 9. Persist completed turn row ───────────────────────────────
     const finishedAt = synthFinishedAt ?? clock.now()
@@ -725,25 +727,54 @@ function readUsage(result: { usage?: unknown; totalUsage?: unknown }): {
     }
 }
 
-/**
- * Project a `GenerateTextResult.toolCalls + toolResults` pair into
- * the public summary shape. Joins by `toolCallId` so callers see one
- * row per call with the result inline. Errors from `toolResults` are
- * mapped onto the same row so callers can render a unified history.
- */
-function summariseToolCalls(result: {
+/** One step's `toolCalls`/`toolResults` pair, shape-narrowed. */
+interface ToolCallStep {
     toolCalls?: unknown
     toolResults?: unknown
-}): RunOneShotTurnToolCall[] {
-    const calls = Array.isArray(result.toolCalls)
-        ? (result.toolCalls as Array<{
+}
+
+/**
+ * Project a result's `toolCalls + toolResults` pairs into the public
+ * summary shape, across EVERY step of the turn, in execution order.
+ * Joins by `toolCallId` so callers see one row per call with the result
+ * inline. Errors from `toolResults` are mapped onto the same row so
+ * callers can render a unified history.
+ *
+ * `GenerateTextResult` exposes `toolCalls`/`toolResults` at the top
+ * level for the FINAL step only — "the tool calls that were made in the
+ * last step", per the AI SDK. A multi-step turn that ends by composing
+ * text therefore reports zero there, which is the common case for a
+ * chat agent, so `steps` is the record to walk.
+ *
+ * The top-level pair is the fallback, not the source: it covers a
+ * caller on an older SDK, and a hand-rolled result that sets the pair
+ * without a matching `steps` entry. Steps only win when they actually
+ * carry something, so an empty `steps: []` never masks a populated
+ * top-level pair.
+ *
+ * Callers persist this to replay a turn's tool calls back to the model
+ * on the NEXT turn. Anything missing here is invisible to the model
+ * later — a two-step confirmation token dropped from this array leaves
+ * the model re-issuing the preview forever.
+ */
+function summariseToolCalls(
+    result: { steps?: unknown } & ToolCallStep
+): RunOneShotTurnToolCall[] {
+    const steps = Array.isArray(result.steps) ? (result.steps as ToolCallStep[]) : []
+    const fromSteps = steps.flatMap(summariseStep)
+    return fromSteps.length > 0 ? fromSteps : summariseStep(result)
+}
+
+function summariseStep(step: ToolCallStep): RunOneShotTurnToolCall[] {
+    const calls = Array.isArray(step.toolCalls)
+        ? (step.toolCalls as Array<{
               toolName?: string
               toolCallId?: string
               input?: unknown
           }>)
         : []
-    const results = Array.isArray(result.toolResults)
-        ? (result.toolResults as Array<{
+    const results = Array.isArray(step.toolResults)
+        ? (step.toolResults as Array<{
               toolCallId?: string
               output?: unknown
               error?: unknown
