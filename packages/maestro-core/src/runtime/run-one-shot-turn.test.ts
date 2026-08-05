@@ -172,6 +172,140 @@ describe('runOneShotTurn → generateText handoff (trap-guard regression)', () =
         })
     })
 
+    // `GenerateTextResult.toolCalls` is the LAST step's calls, so a turn
+    // that runs tools and then composes text reports an empty array
+    // there. Callers persist this summary to replay tool calls to the
+    // model next turn; dropping the earlier steps drops any confirmation
+    // token a two-step tool issued, and the model re-previews forever.
+    describe('toolCalls across steps', () => {
+        it('collects calls from every step, in execution order', async () => {
+            generateTextMock.mockResolvedValueOnce(
+                defaultPrimary({
+                    text: 'Confirm? Reply 1 or 2.',
+                    finishReason: 'stop',
+                    // What the SDK reports at the top level: the last
+                    // step composed text, so nothing.
+                    toolCalls: [],
+                    toolResults: [],
+                    steps: [
+                        {
+                            toolCalls: [
+                                { toolName: 'catalog', toolCallId: 'c1', input: {} },
+                            ],
+                            toolResults: [{ toolCallId: 'c1', output: { items: 3 } }],
+                        },
+                        {
+                            toolCalls: [
+                                { toolName: 'book', toolCallId: 'c2', input: { at: '15:00' } },
+                            ],
+                            toolResults: [
+                                { toolCallId: 'c2', output: { token: 'tok_abc' } },
+                            ],
+                        },
+                        { toolCalls: [], toolResults: [] },
+                    ],
+                })
+            )
+
+            const result = await runOneShotTurn(
+                makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
+            )
+
+            expect(result.toolCalls.map((c) => c.name)).toEqual(['catalog', 'book'])
+            expect(result.toolCalls[1]).toMatchObject({
+                callId: 'c2',
+                input: { at: '15:00' },
+                result: { token: 'tok_abc' },
+            })
+        })
+
+        it('maps a step error onto its own call row', async () => {
+            generateTextMock.mockResolvedValueOnce(
+                defaultPrimary({
+                    text: 'That slot is gone.',
+                    finishReason: 'stop',
+                    toolCalls: [],
+                    toolResults: [],
+                    steps: [
+                        {
+                            toolCalls: [{ toolName: 'book', toolCallId: 'c1', input: {} }],
+                            toolResults: [
+                                {
+                                    toolCallId: 'c1',
+                                    error: { code: 'slot_taken', message: 'gone' },
+                                },
+                            ],
+                        },
+                    ],
+                })
+            )
+
+            const result = await runOneShotTurn(
+                makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
+            )
+
+            expect(result.toolCalls).toHaveLength(1)
+            expect(result.toolCalls[0].error).toEqual({
+                code: 'slot_taken',
+                message: 'gone',
+            })
+        })
+
+        it('falls back to the top-level pair when steps carry nothing', async () => {
+            generateTextMock.mockResolvedValueOnce(
+                defaultPrimary({
+                    text: 'Found it.',
+                    finishReason: 'tool-calls',
+                    toolCalls: [{ toolName: 'lookup', toolCallId: 'c1', input: {} }],
+                    toolResults: [{ toolCallId: 'c1', output: { ok: true } }],
+                    steps: [],
+                })
+            )
+
+            const result = await runOneShotTurn(
+                makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
+            )
+
+            expect(result.toolCalls.map((c) => c.name)).toEqual(['lookup'])
+        })
+
+        it('counts every step against the quota meter, not just the last', async () => {
+            const ports = makePorts()
+            const record = vi.fn().mockResolvedValue(undefined)
+            generateTextMock.mockResolvedValueOnce(
+                defaultPrimary({
+                    text: 'Done.',
+                    finishReason: 'stop',
+                    toolCalls: [],
+                    toolResults: [],
+                    steps: [
+                        {
+                            toolCalls: [{ toolName: 'a', toolCallId: 'c1', input: {} }],
+                            toolResults: [{ toolCallId: 'c1', output: {} }],
+                        },
+                        {
+                            toolCalls: [{ toolName: 'b', toolCallId: 'c2', input: {} }],
+                            toolResults: [{ toolCallId: 'c2', output: {} }],
+                        },
+                    ],
+                })
+            )
+
+            await runOneShotTurn(
+                makeArgs({
+                    ports: {
+                        ...ports,
+                        clock: new FixedClock(FIXED),
+                        quotaStore: { ...ports.quotaStore, record },
+                    },
+                })
+            )
+
+            await vi.waitFor(() => expect(record).toHaveBeenCalled())
+            expect(record.mock.calls[0][0].toolCalls).toBe(2)
+        })
+    })
+
     it('passes `system` as the top-level parameter, NOT mixed into messages', async () => {
         await runOneShotTurn(
             makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })

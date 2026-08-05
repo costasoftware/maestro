@@ -732,15 +732,26 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
             }
 
             // Post-call quota accounting. Fire-and-forget — a slow
-            // ledger write must not stall the SSE finalisation. The
-            // tool-calls count comes from the AI SDK toolCalls list
-            // (may be absent if the turn didn't invoke any tools).
+            // ledger write must not stall the SSE finalisation.
+            //
+            // Count across every step. The event's top-level `toolCalls`
+            // is the LAST step's list, so a turn that invoked tools and
+            // then streamed text billed as zero tool calls. Fall back to
+            // it only when `steps` carries nothing.
             if (args.ports.quotaStore) {
-                const toolCallsCount = Array.isArray(
+                const steps = Array.isArray((event as { steps?: unknown }).steps)
+                    ? (event as { steps: Array<{ toolCalls?: unknown }> }).steps
+                    : []
+                const stepToolCalls = steps.reduce(
+                    (n, s) => n + (Array.isArray(s.toolCalls) ? s.toolCalls.length : 0),
+                    0
+                )
+                const lastStepToolCalls = Array.isArray(
                     (event as { toolCalls?: unknown }).toolCalls
                 )
-                    ? ((event as { toolCalls: unknown[] }).toolCalls.length)
+                    ? (event as { toolCalls: unknown[] }).toolCalls.length
                     : 0
+                const toolCallsCount = stepToolCalls > 0 ? stepToolCalls : lastStepToolCalls
                 args.ports.quotaStore
                     .record({
                         tenantId: args.ctx.tenantId,
