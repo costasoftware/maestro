@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { BLENDED_PRICING, estimateCost, MODEL_PRICING } from './cost.js'
+import { BLENDED_PRICING, estimateCost, MODEL_PRICING, usageFromProvider } from './cost.js'
 
 describe('estimateCost', () => {
     it('uses the exact rate for a known model id', () => {
@@ -74,5 +74,46 @@ describe('estimateCost', () => {
         expect(
             estimateCost({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, 'claude-sonnet-4-6')
         ).toBe(0)
+    })
+})
+
+describe('usageFromProvider', () => {
+    it('subtracts cached tokens from the provider total instead of double-billing them', () => {
+        // The AI SDK reports `inputTokens` as the TOTAL prompt, with
+        // `cachedInputTokens` a subset. Reproduces a measured production turn:
+        // 128k prompt, 99.6% cache hit, Haiku 4.5.
+        const usage = usageFromProvider({
+            inputTokens: 127_983,
+            outputTokens: 124,
+            cachedInputTokens: 127_536,
+        })
+
+        expect(usage.input).toBe(447)
+        expect(usage.cacheRead).toBe(127_536)
+
+        const cost = estimateCost(usage, 'claude-haiku-4-5-20251001')
+        expect(cost).toBeCloseTo(0.0138, 4)
+
+        // What the un-split shape produced, and why it mattered: 10x over.
+        const doubleCounted = estimateCost(
+            { input: 127_983, output: 124, cacheRead: 127_536, cacheWrite: 0 },
+            'claude-haiku-4-5-20251001'
+        )
+        expect(doubleCounted).toBeCloseTo(0.1414, 4)
+        expect(doubleCounted / cost).toBeGreaterThan(10)
+    })
+
+    it('treats a turn with no cache as pure input', () => {
+        const usage = usageFromProvider({ inputTokens: 1_000, outputTokens: 10 })
+        expect(usage).toEqual({ input: 1_000, output: 10, cacheRead: 0, cacheWrite: 0 })
+    })
+
+    it('never bills a negative input when a provider over-reports the cache', () => {
+        const usage = usageFromProvider({
+            inputTokens: 100,
+            outputTokens: 0,
+            cachedInputTokens: 250,
+        })
+        expect(usage.input).toBe(0)
     })
 })

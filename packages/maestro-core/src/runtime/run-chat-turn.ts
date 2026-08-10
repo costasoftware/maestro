@@ -10,7 +10,7 @@ import {
 import { buildAiSdkTools } from '../adapters/ai-sdk.js'
 import { applyCacheBreakpoints } from '../cache-control.js'
 import type { BaseToolContext } from '../context.js'
-import { estimateCost } from '../cost.js'
+import { estimateCost, usageFromProvider } from '../cost.js'
 import { selectChatModel, type ModelTier } from '../models.js'
 import type { AuditStore } from '../ports/audit-store.js'
 import { type Clock, SystemClock } from '../ports/clock.js'
@@ -452,13 +452,16 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
             // bookkeeping once slice 4 lands.
             const cacheWriteTokens = 0
 
+            // `tokensIn` already contains `cacheReadTokens` (the SDK reports
+            // the total prompt size); split before pricing so a cached token
+            // is not billed at both rates.
             const costUsd = estimateCost(
-                {
-                    input: tokensIn,
-                    output: tokensOut,
-                    cacheRead: cacheReadTokens,
-                    cacheWrite: cacheWriteTokens,
-                },
+                usageFromProvider({
+                    inputTokens: tokensIn,
+                    outputTokens: tokensOut,
+                    cachedInputTokens: cacheReadTokens,
+                    cacheWriteTokens,
+                }),
                 selection.modelId
             )
             const costUsdMicro = Math.max(0, Math.round(costUsd * 1_000_000))
@@ -558,12 +561,11 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
                                 synthesisExtraTokensOut = synthUsage?.outputTokens ?? 0
                                 const synthCacheRead = synthUsage?.cachedInputTokens ?? 0
                                 const synthCostUsd = estimateCost(
-                                    {
-                                        input: synthesisExtraTokensIn,
-                                        output: synthesisExtraTokensOut,
-                                        cacheRead: synthCacheRead,
-                                        cacheWrite: 0,
-                                    },
+                                    usageFromProvider({
+                                        inputTokens: synthesisExtraTokensIn,
+                                        outputTokens: synthesisExtraTokensOut,
+                                        cachedInputTokens: synthCacheRead,
+                                    }),
                                     selection.modelId
                                 )
                                 synthesisExtraCostUsdMicro = Math.max(

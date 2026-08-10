@@ -9,7 +9,7 @@ import {
 import { buildAiSdkTools } from '../adapters/ai-sdk.js'
 import { applyCacheBreakpoints } from '../cache-control.js'
 import type { BaseToolContext } from '../context.js'
-import { estimateCost } from '../cost.js'
+import { estimateCost, usageFromProvider } from '../cost.js'
 import { selectChatModel, type ModelTier } from '../models.js'
 import type { AuditStore } from '../ports/audit-store.js'
 import { type Clock, SystemClock } from '../ports/clock.js'
@@ -466,13 +466,16 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
     let cacheReadTokens = primaryUsage.cachedInputTokens
     const cacheWriteTokens = 0 // not exposed by v6 usage today; see run-chat-turn comment
 
+    // `tokensIn` is the provider's TOTAL prompt size and already contains
+    // `cacheReadTokens`; `usageFromProvider` splits them so cached tokens are
+    // billed once, at the cache rate.
     let costUsd = estimateCost(
-        {
-            input: tokensIn,
-            output: tokensOut,
-            cacheRead: cacheReadTokens,
-            cacheWrite: cacheWriteTokens,
-        },
+        usageFromProvider({
+            inputTokens: tokensIn,
+            outputTokens: tokensOut,
+            cachedInputTokens: cacheReadTokens,
+            cacheWriteTokens,
+        }),
         selection.modelId
     )
     let costUsdMicro = Math.max(0, Math.round(costUsd * 1_000_000))
@@ -539,12 +542,12 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
             cacheReadTokens += synthUsage.cachedInputTokens
 
             costUsd = estimateCost(
-                {
-                    input: tokensIn,
-                    output: tokensOut,
-                    cacheRead: cacheReadTokens,
-                    cacheWrite: cacheWriteTokens,
-                },
+                usageFromProvider({
+                    inputTokens: tokensIn,
+                    outputTokens: tokensOut,
+                    cachedInputTokens: cacheReadTokens,
+                    cacheWriteTokens,
+                }),
                 selection.modelId
             )
             costUsdMicro = Math.max(0, Math.round(costUsd * 1_000_000))

@@ -78,10 +78,47 @@ export const BLENDED_PRICING: PricingRow = {
 }
 
 export interface TokenUsage {
+    /**
+     * Input tokens billed at the FULL input rate — i.e. NOT served from the
+     * prompt cache. This is the distinction the pricing table draws, so a
+     * caller holding a provider usage block must split it first; see
+     * {@link usageFromProvider}.
+     */
     input: number
     output: number
     cacheRead: number
     cacheWrite: number
+}
+
+/**
+ * Convert a provider usage block into {@link TokenUsage}.
+ *
+ * The AI SDK reports `inputTokens` as the TOTAL prompt size, with
+ * `cachedInputTokens` a subset of it — not a sibling. Passing both through
+ * unchanged bills every cached token twice: once at the full input rate and
+ * again at the cache-read rate.
+ *
+ * On a heavily-cached turn that is not a rounding error. A measured
+ * production turn (128k prompt, 99.6% cache hit, Haiku 4.5) reported
+ * $0.1414 when the true cost was $0.0138 — 10x over, and the error grows
+ * with the cache hit ratio, so the better the caching the worse the number.
+ *
+ * Clamped at zero: a provider that ever reports `cachedInputTokens` above
+ * `inputTokens` must not produce a negative charge.
+ */
+export function usageFromProvider(usage: {
+    inputTokens: number
+    outputTokens: number
+    cachedInputTokens?: number
+    cacheWriteTokens?: number
+}): TokenUsage {
+    const cacheRead = usage.cachedInputTokens ?? 0
+    return {
+        input: Math.max(0, usage.inputTokens - cacheRead),
+        output: usage.outputTokens,
+        cacheRead,
+        cacheWrite: usage.cacheWriteTokens ?? 0,
+    }
 }
 
 /**
