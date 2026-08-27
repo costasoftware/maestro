@@ -23,8 +23,21 @@ export interface PricingRow {
     output: number
     /** Per-million cache-read tokens, USD. Anthropic: ~10% of input. OpenAI: 50%. */
     cacheRead: number
-    /** Per-million cache-write tokens, USD. Anthropic: ~1.25× input. OpenAI: no extra. */
+    /**
+     * Per-million cache-write tokens at the DEFAULT 5-minute TTL, USD.
+     * Anthropic: ~1.25× input. OpenAI: no extra.
+     */
     cacheWrite: number
+    /**
+     * Per-million cache-write tokens at the 1-hour TTL, USD. Anthropic
+     * charges ~2× input for the longer lifetime; providers with no such
+     * tier omit this and fall back to {@link PricingRow.cacheWrite}.
+     *
+     * Optional so a host's `customPricing` map written against the old
+     * shape keeps compiling — it just prices a 1h write as a 5m one,
+     * which is the behaviour it already had.
+     */
+    cacheWrite1h?: number
 }
 
 /**
@@ -39,12 +52,14 @@ export const MODEL_PRICING: Record<string, PricingRow> = {
         output: 5.0,
         cacheRead: 0.1,
         cacheWrite: 1.25,
+        cacheWrite1h: 2.0,
     },
     'claude-sonnet-4-6': {
         input: 3.0,
         output: 15.0,
         cacheRead: 0.3,
         cacheWrite: 3.75,
+        cacheWrite1h: 6.0,
     },
 
     // ── OpenAI (fallback provider) ────────────────────────────────
@@ -75,6 +90,7 @@ export const BLENDED_PRICING: PricingRow = {
     output: 7.5,
     cacheRead: 0.15,
     cacheWrite: 1.875,
+    cacheWrite1h: 3.0,
 }
 
 export interface TokenUsage {
@@ -88,6 +104,16 @@ export interface TokenUsage {
     output: number
     cacheRead: number
     cacheWrite: number
+    /**
+     * TTL the cache-write tokens were written at, which decides their
+     * rate. Defaults to `'5m'` — the same default `applyCacheBreakpoints`
+     * applies, so a caller that never opted into a longer lifetime prices
+     * exactly as before.
+     *
+     * It rides on the usage rather than sitting beside `modelId` because
+     * it is a property of the turn that was billed, not of the model.
+     */
+    cacheWriteTtl?: '5m' | '1h'
 }
 
 /**
@@ -103,7 +129,14 @@ export interface TokenUsage {
  * $0.1414 when the true cost was $0.0138 — 10x over, and the error grows
  * with the cache hit ratio, so the better the caching the worse the number.
  *
- * Clamped at zero: a provider that ever reports `cachedInputTokens` above
+ * The SAME applies to `cacheWriteTokens`, and that leg was unread until
+ * 2026-08: Anthropic's `inputTokens` is `noCache + cacheWrite + cacheRead`,
+ * so a write token left inside `input` is billed at 1.0× when the real
+ * rate is 1.25× (5m) or 2× (1h). Under-reporting, and it widens exactly
+ * when a host adopts the longer TTL to save money — the measurement would
+ * then flatter the change that made it. Both legs come out.
+ *
+ * Clamped at zero: a provider that ever reports the cache figures above
  * `inputTokens` must not produce a negative charge.
  */
 export function usageFromProvider(usage: {
@@ -111,13 +144,16 @@ export function usageFromProvider(usage: {
     outputTokens: number
     cachedInputTokens?: number
     cacheWriteTokens?: number
+    cacheWriteTtl?: '5m' | '1h'
 }): TokenUsage {
     const cacheRead = usage.cachedInputTokens ?? 0
+    const cacheWrite = usage.cacheWriteTokens ?? 0
     return {
-        input: Math.max(0, usage.inputTokens - cacheRead),
+        input: Math.max(0, usage.inputTokens - cacheRead - cacheWrite),
         output: usage.outputTokens,
         cacheRead,
-        cacheWrite: usage.cacheWriteTokens ?? 0,
+        cacheWrite,
+        ...(usage.cacheWriteTtl ? { cacheWriteTtl: usage.cacheWriteTtl } : {}),
     }
 }
 
@@ -139,11 +175,19 @@ export function estimateCost(
         ? { ...MODEL_PRICING, ...customPricing }
         : MODEL_PRICING
     const price = (modelId && merged[modelId]) || BLENDED_PRICING
+    // A 1h write costs more than a 5m one. Falling back to `cacheWrite`
+    // when `cacheWrite1h` is absent keeps a provider without the tier —
+    // and a host's custom row written before this field existed — priced
+    // exactly as it was.
+    const cacheWriteRate =
+        usage.cacheWriteTtl === '1h'
+            ? price.cacheWrite1h ?? price.cacheWrite
+            : price.cacheWrite
     return (
         (usage.input * price.input +
             usage.output * price.output +
             usage.cacheRead * price.cacheRead +
-            usage.cacheWrite * price.cacheWrite) /
+            usage.cacheWrite * cacheWriteRate) /
         1_000_000
     )
 }
