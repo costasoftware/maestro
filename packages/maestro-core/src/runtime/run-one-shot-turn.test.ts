@@ -1097,8 +1097,8 @@ describe('runOneShotTurn → prompt-cache TTL', () => {
         const call = generateTextMock.mock.calls[0][0]
         expect(cacheControlOf(call)).toEqual({ type: 'ephemeral', ttl: '1h' })
 
-        // The tool breakpoint has to agree — Anthropic rejects a request
-        // whose breakpoints disagree on the lifetime.
+        // The tool breakpoint has to agree: the kernel emits one lifetime
+        // per request, never a mix.
         const tools = call.tools as Record<
             string,
             { providerOptions?: { anthropic?: { cacheControl?: { ttl?: string } } } }

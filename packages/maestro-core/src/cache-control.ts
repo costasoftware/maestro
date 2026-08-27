@@ -108,9 +108,10 @@ export function applyCacheBreakpoints<TTools extends Record<string, unknown>>(
 ): CachedMessages<TTools> {
     const { static: st, dynamic: dyn, ttl = '5m' } = input
 
-    // One directive object, reused by both breakpoints. Anthropic requires
-    // every breakpoint of a request to agree on the TTL, so deriving them
-    // from a single value is the invariant, not a convenience.
+    // One directive object, reused by both breakpoints. Deriving them from
+    // a single value means a request never mixes lifetimes: mixed-TTL
+    // breakpoints carry their own ordering rules at the provider, and a
+    // kernel with one knob has no reason to go near them.
     const cacheControl = { type: 'ephemeral' as const, ttl }
 
     // ── Static system message (cached) ──────────────────────────────────

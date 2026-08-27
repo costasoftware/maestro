@@ -82,10 +82,10 @@ describe('applyCacheBreakpoints', () => {
     })
 
     it('propagates an explicit ttl to BOTH breakpoints', () => {
-        // Anthropic requires every breakpoint of one request to agree on
-        // the TTL. Asserting the tool marker as well as the system message
-        // is what makes a future second breakpoint fail loudly here rather
-        // than at the API.
+        // Both breakpoints must carry the SAME lifetime — a request that
+        // mixes them is a shape this kernel deliberately never emits.
+        // Asserting the tool marker as well as the system message is what
+        // makes a future second breakpoint fail loudly here.
         const result = applyCacheBreakpoints({ ...baseInput, ttl: '1h' })
 
         expect(result.system[0]?.providerOptions?.anthropic?.cacheControl).toEqual({
