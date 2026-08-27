@@ -3,9 +3,32 @@
  *
  * The model provider supports `cacheControl: { type: 'ephemeral' }`
  * markers — content BEFORE the breakpoint is hashed into the cache key,
- * content AFTER is rendered as a separate uncached segment. 5-minute TTL.
- * Cold call pays cache-write (≈1.25× input rate); hot call pays
- * cache-read (≈10% input rate).
+ * content AFTER is rendered as a separate uncached segment. Cold call pays
+ * cache-write; hot call pays cache-read (≈10% input rate).
+ *
+ * ## TTL
+ *
+ * `ttl` selects the cache lifetime and defaults to `'5m'`. It is a COST
+ * decision, not a correctness one, and the two rates differ: a 5m write
+ * costs ≈1.25× the input rate, a 1h write ≈2×. Which one wins is decided
+ * by the gap between consecutive turns that share a prefix, so it belongs
+ * to the host — the kernel cannot know a consumer's traffic shape.
+ *
+ * The measurement that produced this option, from one production host over
+ * 7 days (614 turns, all on the hardcoded 5m):
+ *
+ *   gap since previous turn   turns   miss rate
+ *   ≤ 5min                      437       12.4%
+ *   5–60min                     147       67.3%   ← the TTL expiring
+ *   > 60min                      29       51.7%
+ *
+ * The step at the 5-minute line is the whole finding. Turns landing in the
+ * 5–60min band cost 3.2× per token what a cache-hit turn costs, and a 1h
+ * TTL converts them. A host whose turns are sparser than an hour should
+ * stay on `'5m'`: it would pay the 2× write and still never read.
+ *
+ * The default stays `'5m'` so this is opt-in — flipping it for a sparse
+ * consumer is the same defect inverted.
  *
  * The TS-typed boundary between `static` and `dynamic` is the discipline.
  * A developer physically can't put `business.name` into the cached block
@@ -48,7 +71,20 @@ export interface CacheableBlock<TTools extends Record<string, unknown>> {
         /** ISO timestamp for "now" context — varies per turn; must NOT be cached. */
         nowIso: string
     }
+    /**
+     * Cache lifetime for every breakpoint this call emits. Defaults to
+     * `'5m'`. See the module header for why the default is the short one
+     * and when a host should pass `'1h'`.
+     */
+    ttl?: CacheTtl
 }
+
+/**
+ * Anthropic ephemeral-cache lifetimes. Mirrors the provider's own union so
+ * a host reading a config value can be typed against this and fail at the
+ * boundary rather than at the API call.
+ */
+export type CacheTtl = '5m' | '1h'
 
 export interface CachedMessages<TTools extends Record<string, unknown>> {
     /**
@@ -59,7 +95,9 @@ export interface CachedMessages<TTools extends Record<string, unknown>> {
     system: Array<{
         role: 'system'
         content: string
-        providerOptions?: { anthropic?: { cacheControl?: { type: 'ephemeral' } } }
+        providerOptions?: {
+            anthropic?: { cacheControl?: { type: 'ephemeral'; ttl: CacheTtl } }
+        }
     }>
     /** Tool registry — the last tool carries the cacheControl marker. */
     tools: TTools
@@ -68,16 +106,19 @@ export interface CachedMessages<TTools extends Record<string, unknown>> {
 export function applyCacheBreakpoints<TTools extends Record<string, unknown>>(
     input: CacheableBlock<TTools>
 ): CachedMessages<TTools> {
-    const { static: st, dynamic: dyn } = input
+    const { static: st, dynamic: dyn, ttl = '5m' } = input
+
+    // One directive object, reused by both breakpoints. Anthropic requires
+    // every breakpoint of a request to agree on the TTL, so deriving them
+    // from a single value is the invariant, not a convenience.
+    const cacheControl = { type: 'ephemeral' as const, ttl }
 
     // ── Static system message (cached) ──────────────────────────────────
     const staticContent = st.corpus ? `${st.intro}\n\n${st.corpus}` : st.intro
     const staticMessage = {
         role: 'system' as const,
         content: staticContent,
-        providerOptions: {
-            anthropic: { cacheControl: { type: 'ephemeral' as const } },
-        },
+        providerOptions: { anthropic: { cacheControl } },
     }
 
     // ── Dynamic system message (uncached) ───────────────────────────────
@@ -111,9 +152,7 @@ export function applyCacheBreakpoints<TTools extends Record<string, unknown>>(
         if (isLast) {
             markedTools[key] = {
                 ...(original as object),
-                providerOptions: {
-                    anthropic: { cacheControl: { type: 'ephemeral' as const } },
-                },
+                providerOptions: { anthropic: { cacheControl } },
             }
         } else {
             const { providerOptions: _drop, ...rest } = original as {
