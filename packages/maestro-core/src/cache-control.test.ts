@@ -24,7 +24,10 @@ describe('applyCacheBreakpoints', () => {
         const [staticMsg, dynamicMsg] = result.system
         expect(staticMsg?.role).toBe('system')
         expect(staticMsg?.content).toBe('You are a helpful agent.\n\nReference: see the docs.')
-        expect(staticMsg?.providerOptions?.anthropic?.cacheControl).toEqual({ type: 'ephemeral' })
+        expect(staticMsg?.providerOptions?.anthropic?.cacheControl).toEqual({
+            type: 'ephemeral',
+            ttl: '5m',
+        })
 
         expect(dynamicMsg?.role).toBe('system')
         expect(dynamicMsg?.providerOptions).toBeUndefined()
@@ -42,7 +45,10 @@ describe('applyCacheBreakpoints', () => {
 
         expect(alpha.providerOptions).toBeUndefined()
         expect(beta.providerOptions).toBeUndefined()
-        expect(gamma.providerOptions?.anthropic?.cacheControl).toEqual({ type: 'ephemeral' })
+        expect(gamma.providerOptions?.anthropic?.cacheControl).toEqual({
+            type: 'ephemeral',
+            ttl: '5m',
+        })
     })
 
     it('produces byte-identical static content for the same static input across tenants', () => {
@@ -68,5 +74,40 @@ describe('applyCacheBreakpoints', () => {
             static: { ...baseInput.static, corpus: '' },
         })
         expect(result.system[0]?.content).toBe('You are a helpful agent.')
+    })
+    it("defaults to a 5m ttl when the caller passes none", () => {
+        const result = applyCacheBreakpoints(baseInput)
+
+        expect(result.system[0]?.providerOptions?.anthropic?.cacheControl?.ttl).toBe('5m')
+    })
+
+    it('propagates an explicit ttl to BOTH breakpoints', () => {
+        // Both breakpoints must carry the SAME lifetime — a request that
+        // mixes them is a shape this kernel deliberately never emits.
+        // Asserting the tool marker as well as the system message is what
+        // makes a future second breakpoint fail loudly here.
+        const result = applyCacheBreakpoints({ ...baseInput, ttl: '1h' })
+
+        expect(result.system[0]?.providerOptions?.anthropic?.cacheControl).toEqual({
+            type: 'ephemeral',
+            ttl: '1h',
+        })
+        const gamma = result.tools.gamma as {
+            providerOptions?: { anthropic?: { cacheControl?: { ttl?: string } } }
+        }
+        expect(gamma.providerOptions?.anthropic?.cacheControl).toEqual({
+            type: 'ephemeral',
+            ttl: '1h',
+        })
+    })
+
+    it('keeps the cached block byte-identical across ttls', () => {
+        // The ttl rides in providerOptions, never in the hashed content.
+        // If it ever leaked into `content`, switching ttl would silently
+        // invalidate every tenant's cache entry at once.
+        const short = applyCacheBreakpoints({ ...baseInput, ttl: '5m' })
+        const long = applyCacheBreakpoints({ ...baseInput, ttl: '1h' })
+
+        expect(short.system[0]?.content).toBe(long.system[0]?.content)
     })
 })

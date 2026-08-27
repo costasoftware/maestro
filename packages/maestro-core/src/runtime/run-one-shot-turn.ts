@@ -7,7 +7,7 @@ import {
 } from 'ai'
 
 import { buildAiSdkTools } from '../adapters/ai-sdk.js'
-import { applyCacheBreakpoints } from '../cache-control.js'
+import { applyCacheBreakpoints, type CacheTtl } from '../cache-control.js'
 import type { BaseToolContext } from '../context.js'
 import { estimateCost, usageFromProvider } from '../cost.js'
 import { selectChatModel, type ModelTier } from '../models.js'
@@ -25,6 +25,7 @@ import type { AgentToolDefinition } from '../tool.js'
 import { decideEmptyRecovery, type EmptyRecoveryMode } from './empty-recovery.js'
 import { loadMemoryBlock } from './memory.js'
 import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
+import { readResultUsage } from './usage.js'
 
 /**
  * Single-shot turn entry point — the non-streaming sibling of
@@ -109,6 +110,18 @@ export interface RunOneShotTurnArgs<TCtx extends BaseToolContext<string>> {
      * Memory facts auto-append to `dynamic`.
      */
     systemPrompt: { static: string; dynamic?: string }
+    /**
+     * Prompt-cache lifetime for this turn's breakpoints. Defaults to
+     * `'5m'`, matching `applyCacheBreakpoints`.
+     *
+     * Pass `'1h'` when consecutive turns sharing a prefix are typically
+     * further apart than five minutes — a chat agent answering bursty
+     * inbound traffic is the case this exists for. It is a cost decision
+     * and it can go either way: the 1h write rate is ≈2× input against
+     * ≈1.25× for 5m, so a host sparser than an hour pays more and still
+     * never reads. See `cache-control.ts` for the measurement.
+     */
+    promptCacheTtl?: CacheTtl
     /** Per-tier model ids. Host resolves from its env layer. */
     models: { fast: string; smart: string; force?: string | null }
     /** Optional hint that bypasses the model heuristic for this turn. */
@@ -380,6 +393,7 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
             principal: args.ctx.principal ? { id: args.ctx.principal.id } : undefined,
             nowIso: nowAtCacheSplit.toISOString(),
         },
+        ttl: args.promptCacheTtl,
     })
     const dynamicMsg = cached.system[1]
     if (dynamicMsg && dynamicLines.length > 0) {
@@ -460,21 +474,22 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
     // cross-step sum on `.totalUsage`. For tool-loop multi-step calls
     // we want the rolled-up totals so the persisted row reflects the
     // full cost, not just the last step.
-    const primaryUsage = readUsage(primaryResult)
+    const primaryUsage = readResultUsage(primaryResult)
     let tokensIn = primaryUsage.inputTokens
     let tokensOut = primaryUsage.outputTokens
-    let cacheReadTokens = primaryUsage.cachedInputTokens
-    const cacheWriteTokens = 0 // not exposed by v6 usage today; see run-chat-turn comment
+    let cacheReadTokens = primaryUsage.cacheReadTokens
+    let cacheWriteTokens = primaryUsage.cacheWriteTokens
 
     // `tokensIn` is the provider's TOTAL prompt size and already contains
-    // `cacheReadTokens`; `usageFromProvider` splits them so cached tokens are
-    // billed once, at the cache rate.
+    // BOTH cache figures; `usageFromProvider` splits them so a cached token
+    // is billed once, at its own rate.
     let costUsd = estimateCost(
         usageFromProvider({
             inputTokens: tokensIn,
             outputTokens: tokensOut,
             cachedInputTokens: cacheReadTokens,
             cacheWriteTokens,
+            cacheWriteTtl: args.promptCacheTtl,
         }),
         selection.modelId
     )
@@ -536,10 +551,11 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
                 synthText.trim().length > 0
                     ? synthText
                     : recoveryDecision.fallbackText ?? ''
-            const synthUsage = readUsage(synthesisResult)
+            const synthUsage = readResultUsage(synthesisResult)
             tokensIn += synthUsage.inputTokens
             tokensOut += synthUsage.outputTokens
-            cacheReadTokens += synthUsage.cachedInputTokens
+            cacheReadTokens += synthUsage.cacheReadTokens
+            cacheWriteTokens += synthUsage.cacheWriteTokens
 
             costUsd = estimateCost(
                 usageFromProvider({
@@ -547,6 +563,7 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
                     outputTokens: tokensOut,
                     cachedInputTokens: cacheReadTokens,
                     cacheWriteTokens,
+                    cacheWriteTtl: args.promptCacheTtl,
                 }),
                 selection.modelId
             )
@@ -705,28 +722,6 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
             attempted: synthesisAttempted,
             mode: recoveryDecision.mode,
         },
-    }
-}
-
-/** Read usage off a `generateText` result tolerant of partial / missing fields. */
-function readUsage(result: { usage?: unknown; totalUsage?: unknown }): {
-    inputTokens: number
-    outputTokens: number
-    cachedInputTokens: number
-} {
-    // Prefer `totalUsage` when present (multi-step tool loops roll into it).
-    // Fall back to single-step `usage` for v6 implementations that haven't
-    // populated totalUsage yet (and for the synthesis call where the two
-    // are equivalent because stopWhen=1).
-    const raw = (result.totalUsage ?? result.usage ?? null) as {
-        inputTokens?: number
-        outputTokens?: number
-        cachedInputTokens?: number
-    } | null
-    return {
-        inputTokens: raw?.inputTokens ?? 0,
-        outputTokens: raw?.outputTokens ?? 0,
-        cachedInputTokens: raw?.cachedInputTokens ?? 0,
     }
 }
 

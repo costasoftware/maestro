@@ -14,6 +14,7 @@ export {
     applyCacheBreakpoints,
     type CacheableBlock,
     type CachedMessages,
+    type CacheTtl,
 } from './cache-control.js'
 export {
     BLENDED_PRICING,

@@ -116,4 +116,89 @@ describe('usageFromProvider', () => {
         })
         expect(usage.input).toBe(0)
     })
+
+    it('subtracts the cache-WRITE leg from billable input', () => {
+        // Anthropic reports inputTokens = noCache + cacheWrite + cacheRead.
+        // Leaving the write leg inside `input` bills it at 1.0x when the
+        // real rate is 1.25x (5m) or 2x (1h) — silently under-reporting.
+        const usage = usageFromProvider({
+            inputTokens: 10_000,
+            outputTokens: 100,
+            cachedInputTokens: 6_000,
+            cacheWriteTokens: 3_000,
+        })
+
+        expect(usage).toEqual({
+            input: 1_000,
+            output: 100,
+            cacheRead: 6_000,
+            cacheWrite: 3_000,
+        })
+    })
+
+    it('never bills a negative input when both cache legs overflow the total', () => {
+        const usage = usageFromProvider({
+            inputTokens: 100,
+            outputTokens: 0,
+            cachedInputTokens: 80,
+            cacheWriteTokens: 90,
+        })
+        expect(usage.input).toBe(0)
+    })
+
+    it('carries cacheWriteTtl through, and omits it when unset', () => {
+        expect(
+            usageFromProvider({
+                inputTokens: 10,
+                outputTokens: 0,
+                cacheWriteTokens: 5,
+                cacheWriteTtl: '1h',
+            }).cacheWriteTtl
+        ).toBe('1h')
+
+        expect(
+            usageFromProvider({ inputTokens: 10, outputTokens: 0 })
+        ).not.toHaveProperty('cacheWriteTtl')
+    })
+})
+
+describe('estimateCost cache-write TTL rates', () => {
+    it('prices a 1h write above a 5m one on the same tokens', () => {
+        // Haiku 4.5: input $1/M, so 5m write $1.25/M and 1h write $2.00/M.
+        const base = { input: 0, output: 0, cacheRead: 0, cacheWrite: 1_000_000 }
+
+        expect(estimateCost(base, 'claude-haiku-4-5-20251001')).toBeCloseTo(1.25, 6)
+        expect(
+            estimateCost({ ...base, cacheWriteTtl: '1h' }, 'claude-haiku-4-5-20251001')
+        ).toBeCloseTo(2.0, 6)
+    })
+
+    it("treats an absent ttl as 5m, so an un-migrated caller prices unchanged", () => {
+        const base = { input: 0, output: 0, cacheRead: 0, cacheWrite: 1_000_000 }
+
+        expect(estimateCost(base, 'claude-sonnet-4-6')).toBe(
+            estimateCost({ ...base, cacheWriteTtl: '5m' }, 'claude-sonnet-4-6')
+        )
+    })
+
+    it('falls back to the 5m rate for a custom row that predates cacheWrite1h', () => {
+        // A host's existing customPricing map has no `cacheWrite1h`. It must
+        // keep pricing rather than resolve to undefined and yield NaN.
+        const cost = estimateCost(
+            { input: 0, output: 0, cacheRead: 0, cacheWrite: 1_000_000, cacheWriteTtl: '1h' },
+            'custom-model',
+            { 'custom-model': { input: 10, output: 20, cacheRead: 1, cacheWrite: 12.5 } }
+        )
+
+        expect(cost).toBeCloseTo(12.5, 6)
+    })
+
+    it('prices an unknown model id off the blended row, 1h included', () => {
+        expect(
+            estimateCost(
+                { input: 0, output: 0, cacheRead: 0, cacheWrite: 1_000_000, cacheWriteTtl: '1h' },
+                'who-knows'
+            )
+        ).toBeCloseTo(BLENDED_PRICING.cacheWrite1h ?? 0, 6)
+    })
 })
