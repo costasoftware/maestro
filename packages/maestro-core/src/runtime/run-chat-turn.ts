@@ -8,7 +8,7 @@ import {
 } from 'ai'
 
 import { buildAiSdkTools } from '../adapters/ai-sdk.js'
-import { applyCacheBreakpoints } from '../cache-control.js'
+import { applyCacheBreakpoints, type CacheTtl } from '../cache-control.js'
 import type { BaseToolContext } from '../context.js'
 import { estimateCost, usageFromProvider } from '../cost.js'
 import { selectChatModel, type ModelTier } from '../models.js'
@@ -25,6 +25,7 @@ import type { AgentToolDefinition } from '../tool.js'
 import { decideEmptyRecovery, type EmptyRecoveryMode } from './empty-recovery.js'
 import { loadMemoryBlock } from './memory.js'
 import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
+import { readProviderUsage } from './usage.js'
 
 /**
  * Public chat-turn entry point. One call replaces the ~300 LoC of stream
@@ -109,6 +110,18 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext<string>> {
      * them in by hand.
      */
     systemPrompt: { static: string; dynamic?: string }
+    /**
+     * Prompt-cache lifetime for this turn's breakpoints. Defaults to
+     * `'5m'`, matching `applyCacheBreakpoints`.
+     *
+     * Pass `'1h'` when consecutive turns sharing a prefix are typically
+     * further apart than five minutes — a chat agent answering bursty
+     * inbound traffic is the case this exists for. It is a cost decision
+     * and it can go either way: the 1h write rate is ≈2× input against
+     * ≈1.25× for 5m, so a host sparser than an hour pays more and still
+     * never reads. See `cache-control.ts` for the measurement.
+     */
+    promptCacheTtl?: CacheTtl
     /** Per-tier model ids. Host resolves from its env layer. */
     models: { fast: string; smart: string; force?: string | null }
     /** Optional hint that bypasses the model heuristic for this turn. */
@@ -376,6 +389,7 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
             principal: args.ctx.principal ? { id: args.ctx.principal.id } : undefined,
             nowIso: nowAtCacheSplit.toISOString(),
         },
+        ttl: args.promptCacheTtl,
     })
     // Append the host-supplied dynamic + memory content to the
     // generated dynamic system segment so it lands AFTER the
@@ -433,26 +447,17 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
             const finishedAt = clock.now()
             const durationMs = finishedAt.getTime() - startedAt.getTime()
 
-            // AI SDK v6 surfaces usage as `event.usage` with the
-            // shape { inputTokens, outputTokens, totalTokens } and
-            // optionally cachedInputTokens for providers that support
-            // prompt caching. Fall back to 0 to keep the cost
-            // arithmetic safe when fields are missing.
-            const usage = (event.usage ?? null) as {
-                inputTokens?: number
-                outputTokens?: number
-                cachedInputTokens?: number
-                cachedOutputTokens?: number
-            } | null
-            const tokensIn = usage?.inputTokens ?? 0
-            const tokensOut = usage?.outputTokens ?? 0
-            const cacheReadTokens = usage?.cachedInputTokens ?? 0
-            // Cache-write token count isn't exposed in the v6 usage
-            // object today. Tracked separately in cache-control.ts
-            // bookkeeping once slice 4 lands.
-            const cacheWriteTokens = 0
+            // `readProviderUsage` owns the narrowing: which fields the
+            // SDK exposes, which are deprecated, and what a provider
+            // reporting nothing yields. See its header for why the
+            // cache-write leg had to stop being a hardcoded zero.
+            const usage = readProviderUsage(event.usage ?? null)
+            const tokensIn = usage.inputTokens
+            const tokensOut = usage.outputTokens
+            const cacheReadTokens = usage.cacheReadTokens
+            const cacheWriteTokens = usage.cacheWriteTokens
 
-            // `tokensIn` already contains `cacheReadTokens` (the SDK reports
+            // `tokensIn` already contains BOTH cache figures (the SDK reports
             // the total prompt size); split before pricing so a cached token
             // is not billed at both rates.
             const costUsd = estimateCost(
@@ -461,6 +466,7 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
                     outputTokens: tokensOut,
                     cachedInputTokens: cacheReadTokens,
                     cacheWriteTokens,
+                    cacheWriteTtl: args.promptCacheTtl,
                 }),
                 selection.modelId
             )
@@ -552,19 +558,20 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
                             abortSignal: args.abortSignal,
                             onFinish: async (synthEvent) => {
                                 const synthFinishedAt = clock.now()
-                                const synthUsage = (synthEvent.usage ?? null) as {
-                                    inputTokens?: number
-                                    outputTokens?: number
-                                    cachedInputTokens?: number
-                                } | null
-                                synthesisExtraTokensIn = synthUsage?.inputTokens ?? 0
-                                synthesisExtraTokensOut = synthUsage?.outputTokens ?? 0
-                                const synthCacheRead = synthUsage?.cachedInputTokens ?? 0
+                                const synthUsage = readProviderUsage(
+                                    synthEvent.usage ?? null
+                                )
+                                synthesisExtraTokensIn = synthUsage.inputTokens
+                                synthesisExtraTokensOut = synthUsage.outputTokens
+                                const synthCacheRead = synthUsage.cacheReadTokens
+                                const synthCacheWrite = synthUsage.cacheWriteTokens
                                 const synthCostUsd = estimateCost(
                                     usageFromProvider({
                                         inputTokens: synthesisExtraTokensIn,
                                         outputTokens: synthesisExtraTokensOut,
                                         cachedInputTokens: synthCacheRead,
+                                        cacheWriteTokens: synthCacheWrite,
+                                        cacheWriteTtl: args.promptCacheTtl,
                                     }),
                                     selection.modelId
                                 )
@@ -593,7 +600,8 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
                                         tokensOut: tokensOut + synthesisExtraTokensOut,
                                         cacheReadTokens:
                                             cacheReadTokens + synthCacheRead,
-                                        cacheWriteTokens,
+                                        cacheWriteTokens:
+                                            cacheWriteTokens + synthCacheWrite,
                                         costUsdMicro:
                                             costUsdMicro + synthesisExtraCostUsdMicro,
                                         durationMs:

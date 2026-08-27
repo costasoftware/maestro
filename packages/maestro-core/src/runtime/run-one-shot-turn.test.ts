@@ -1073,3 +1073,94 @@ describe('runOneShotTurn → onError + tier/selectionReason symmetry with runCha
         expect(result.selectionReason).toBe('forced')
     })
 })
+
+describe('runOneShotTurn → prompt-cache TTL', () => {
+    function cacheControlOf(call: Record<string, unknown>) {
+        const system = call.system as Array<{
+            providerOptions?: { anthropic?: { cacheControl?: { ttl?: string } } }
+        }>
+        return system[0]?.providerOptions?.anthropic?.cacheControl
+    }
+
+    it('sends a 5m ttl when the host passes none', async () => {
+        await runOneShotTurn(makeArgs())
+
+        expect(cacheControlOf(generateTextMock.mock.calls[0][0])).toEqual({
+            type: 'ephemeral',
+            ttl: '5m',
+        })
+    })
+
+    it("forwards the host's promptCacheTtl to the model call", async () => {
+        await runOneShotTurn(makeArgs({ promptCacheTtl: '1h' }))
+
+        const call = generateTextMock.mock.calls[0][0]
+        expect(cacheControlOf(call)).toEqual({ type: 'ephemeral', ttl: '1h' })
+
+        // The tool breakpoint has to agree — Anthropic rejects a request
+        // whose breakpoints disagree on the lifetime.
+        const tools = call.tools as Record<
+            string,
+            { providerOptions?: { anthropic?: { cacheControl?: { ttl?: string } } } }
+        >
+        const marked = Object.values(tools).filter(
+            (t) => t.providerOptions?.anthropic?.cacheControl !== undefined
+        )
+        expect(marked).toHaveLength(1)
+        expect(marked[0]?.providerOptions?.anthropic?.cacheControl?.ttl).toBe('1h')
+    })
+
+    it('reports cache read AND write tokens from inputTokenDetails', async () => {
+        generateTextMock.mockResolvedValueOnce(
+            defaultPrimary({
+                usage: {
+                    inputTokens: 10_000,
+                    outputTokens: 40,
+                    inputTokenDetails: {
+                        cacheReadTokens: 6_000,
+                        cacheWriteTokens: 3_000,
+                    },
+                },
+                totalUsage: {
+                    inputTokens: 10_000,
+                    outputTokens: 40,
+                    inputTokenDetails: {
+                        cacheReadTokens: 6_000,
+                        cacheWriteTokens: 3_000,
+                    },
+                },
+            })
+        )
+
+        const result = await runOneShotTurn(makeArgs())
+
+        expect(result.usage.tokensIn).toBe(10_000)
+        expect(result.usage.cacheReadTokens).toBe(6_000)
+        // Was hardcoded 0 until 2026-08, which billed every write token at
+        // the full input rate.
+        expect(result.usage.cacheWriteTokens).toBe(3_000)
+    })
+
+    it('prices a 1h write above a 5m one on the same turn', async () => {
+        const primary = defaultPrimary({
+            usage: {
+                inputTokens: 1_000_000,
+                outputTokens: 0,
+                inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 1_000_000 },
+            },
+            totalUsage: {
+                inputTokens: 1_000_000,
+                outputTokens: 0,
+                inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 1_000_000 },
+            },
+        })
+
+        generateTextMock.mockResolvedValueOnce(primary)
+        const short = await runOneShotTurn(makeArgs())
+
+        generateTextMock.mockResolvedValueOnce(primary)
+        const long = await runOneShotTurn(makeArgs({ promptCacheTtl: '1h' }))
+
+        expect(long.usage.costUsdMicro).toBeGreaterThan(short.usage.costUsdMicro)
+    })
+})
