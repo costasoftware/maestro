@@ -19,7 +19,9 @@ export {
 export {
     BLENDED_PRICING,
     estimateCost,
+    estimateRequestsCost,
     MODEL_PRICING,
+    type PricingRates,
     type PricingRow,
     type TokenUsage,
 } from './cost.js'

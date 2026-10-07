@@ -14,7 +14,7 @@ In-process tool-calling agent runtime for SaaS products. Model-agnostic, transpo
 - Provider fallback helpers: `shouldFallback`, `mapModelIdToOpenAI`
 - Window-math helpers for `QuotaStore` impls: `dailyTokensWindow`, `hourlyToolCallsWindow`, etc.
 - Model router: `selectChatModel` (fast/smart heuristic, configurable thresholds)
-- Cost estimator: `estimateCost` with built-in Anthropic + OpenAI pricing
+- Cost estimator: `estimateCost` with built-in Anthropic + OpenAI pricing, including prompt-length rate cards (Claude Haiku 5.5); `estimateRequestsCost` prices a tool loop step by step
 
 ### `0.1.x` (carried forward)
 

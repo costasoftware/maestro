@@ -450,6 +450,49 @@ describe('runOneShotTurn → generateText handoff (trap-guard regression)', () =
         expect(call.maxOutputTokens).toBe(256)
     })
 
+    it('forwards providerOptions to generateText when provided', async () => {
+        const providerOptions = { anthropic: { thinking: { type: 'disabled' as const } } }
+        await runOneShotTurn(
+            makeArgs({ providerOptions, ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
+        )
+        const call = generateTextMock.mock.calls[0]?.[0] as { providerOptions?: unknown }
+        expect(call.providerOptions).toEqual(providerOptions)
+    })
+
+    it('omits providerOptions from generateText args when not provided', async () => {
+        await runOneShotTurn(
+            makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
+        )
+        const call = generateTextMock.mock.calls[0]?.[0] as Record<string, unknown>
+        expect('providerOptions' in call).toBe(false)
+    })
+
+    it('prices a tool loop step by step and persists the summed tokens', async () => {
+        // Three 40k-token requests on Haiku 5.5: each is a short-card request
+        // ($0.10/M). Priced as one 120k block it would land on the long card.
+        generateTextMock.mockResolvedValueOnce(
+            defaultPrimary({
+                usage: { inputTokens: 40_000, outputTokens: 0 },
+                totalUsage: { inputTokens: 120_000, outputTokens: 0 },
+                steps: [
+                    { usage: { inputTokens: 40_000, outputTokens: 0 } },
+                    { usage: { inputTokens: 40_000, outputTokens: 0 } },
+                    { usage: { inputTokens: 40_000, outputTokens: 0 } },
+                ],
+            })
+        )
+
+        const result = await runOneShotTurn(
+            makeArgs({
+                models: { fast: 'claude-haiku-5-5', smart: 'claude-sonnet-4-6' },
+                ports: { ...makePorts(), clock: new FixedClock(FIXED) },
+            })
+        )
+
+        expect(result.usage.tokensIn).toBe(120_000)
+        expect(result.usage.costUsdMicro).toBe(12_000)
+    })
+
     it('omits maxOutputTokens from generateText args when not provided', async () => {
         await runOneShotTurn(
             makeArgs({ ports: { ...makePorts(), clock: new FixedClock(FIXED) } })
