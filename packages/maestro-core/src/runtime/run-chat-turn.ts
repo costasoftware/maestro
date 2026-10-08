@@ -10,7 +10,6 @@ import {
 import { buildAiSdkTools } from '../adapters/ai-sdk.js'
 import { applyCacheBreakpoints, type CacheTtl } from '../cache-control.js'
 import type { BaseToolContext } from '../context.js'
-import { estimateCost, usageFromProvider } from '../cost.js'
 import { selectChatModel, type ModelTier } from '../models.js'
 import type { AuditStore } from '../ports/audit-store.js'
 import { type Clock, SystemClock } from '../ports/clock.js'
@@ -25,7 +24,7 @@ import type { AgentToolDefinition } from '../tool.js'
 import { decideEmptyRecovery, type EmptyRecoveryMode } from './empty-recovery.js'
 import { loadMemoryBlock } from './memory.js'
 import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
-import { readProviderUsage } from './usage.js'
+import { estimateTurnCost, readRequestUsages, sumTurnUsage } from './usage.js'
 
 /**
  * Public chat-turn entry point. One call replaces the ~300 LoC of stream
@@ -39,7 +38,7 @@ import { readProviderUsage } from './usage.js'
  *   ✓ AI SDK tool building via the `buildAiSdkTools` adapter
  *   ✓ Turn persistence via `TurnStore` port (pending → completed | failed | aborted)
  *   ✓ Telemetry emit via `TelemetrySink` port (default Noop)
- *   ✓ Cost estimate via `estimateCost`
+ *   ✓ Cost estimate via `estimateCost`, priced per tool-loop step
  *   ✓ SSE Response ready to return from a Next.js route
  *   ✓ Pre-call quota gate via `QuotaStore.check` (throws `AiQuotaDeniedError` on deny)
  *   ✓ Post-call quota record via `QuotaStore.record` (fire-and-forget)
@@ -177,6 +176,14 @@ export interface RunChatTurnArgs<TCtx extends BaseToolContext<string>> {
      * tool call). Set higher for agents that do deep multi-step work.
      */
     maxSteps?: number
+    /**
+     * Provider options forwarded to every `streamText` call of the turn —
+     * the primary loop and the empty-recovery synthesis. Hosts set
+     * per-provider request knobs here, e.g.
+     * `{ anthropic: { thinking: { type: 'disabled' } } }` to keep a model
+     * that thinks by default inside a tight `maxOutputTokens`.
+     */
+    providerOptions?: Parameters<typeof streamText>[0]['providerOptions']
     /**
      * Empty-recovery classifier mode. Default `'log_only'` — the kernel
      * detects the tool-loop-no-text case on every finished turn and
@@ -443,33 +450,22 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
         // call with no answer.
         stopWhen: stepCountIs(args.maxSteps ?? 5),
         abortSignal: args.abortSignal,
+        ...(args.providerOptions ? { providerOptions: args.providerOptions } : {}),
         onFinish: async (event) => {
             const finishedAt = clock.now()
             const durationMs = finishedAt.getTime() - startedAt.getTime()
 
-            // `readProviderUsage` owns the narrowing: which fields the
-            // SDK exposes, which are deprecated, and what a provider
-            // reporting nothing yields. See its header for why the
-            // cache-write leg had to stop being a hardcoded zero.
-            const usage = readProviderUsage(event.usage ?? null)
+            // One usage per step of the tool loop: `event.usage` is the
+            // LAST step only, and a model priced by prompt size picks its
+            // card per request. Totals are the sum; cost is priced per step.
+            const requests = readRequestUsages(event)
+            const usage = sumTurnUsage(requests)
             const tokensIn = usage.inputTokens
             const tokensOut = usage.outputTokens
             const cacheReadTokens = usage.cacheReadTokens
             const cacheWriteTokens = usage.cacheWriteTokens
 
-            // `tokensIn` already contains BOTH cache figures (the SDK reports
-            // the total prompt size); split before pricing so a cached token
-            // is not billed at both rates.
-            const costUsd = estimateCost(
-                usageFromProvider({
-                    inputTokens: tokensIn,
-                    outputTokens: tokensOut,
-                    cachedInputTokens: cacheReadTokens,
-                    cacheWriteTokens,
-                    cacheWriteTtl: args.promptCacheTtl,
-                }),
-                selection.modelId
-            )
+            const costUsd = estimateTurnCost(requests, selection.modelId, args.promptCacheTtl)
             const costUsdMicro = Math.max(0, Math.round(costUsd * 1_000_000))
 
             // ── Empty-recovery classifier ───────────────────────────
@@ -556,24 +552,19 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
                             toolChoice: 'none',
                             stopWhen: stepCountIs(1),
                             abortSignal: args.abortSignal,
+                            ...(args.providerOptions
+                                ? { providerOptions: args.providerOptions }
+                                : {}),
                             onFinish: async (synthEvent) => {
                                 const synthFinishedAt = clock.now()
-                                const synthUsage = readProviderUsage(
-                                    synthEvent.usage ?? null
-                                )
+                                const synthRequests = readRequestUsages(synthEvent)
+                                const synthUsage = sumTurnUsage(synthRequests)
                                 synthesisExtraTokensIn = synthUsage.inputTokens
                                 synthesisExtraTokensOut = synthUsage.outputTokens
-                                const synthCacheRead = synthUsage.cacheReadTokens
-                                const synthCacheWrite = synthUsage.cacheWriteTokens
-                                const synthCostUsd = estimateCost(
-                                    usageFromProvider({
-                                        inputTokens: synthesisExtraTokensIn,
-                                        outputTokens: synthesisExtraTokensOut,
-                                        cachedInputTokens: synthCacheRead,
-                                        cacheWriteTokens: synthCacheWrite,
-                                        cacheWriteTtl: args.promptCacheTtl,
-                                    }),
-                                    selection.modelId
+                                const synthCostUsd = estimateTurnCost(
+                                    synthRequests,
+                                    selection.modelId,
+                                    args.promptCacheTtl
                                 )
                                 synthesisExtraCostUsdMicro = Math.max(
                                     0,
@@ -599,9 +590,9 @@ export async function runChatTurn<TCtx extends BaseToolContext<string>>(
                                         tokensIn: tokensIn + synthesisExtraTokensIn,
                                         tokensOut: tokensOut + synthesisExtraTokensOut,
                                         cacheReadTokens:
-                                            cacheReadTokens + synthCacheRead,
+                                            cacheReadTokens + synthUsage.cacheReadTokens,
                                         cacheWriteTokens:
-                                            cacheWriteTokens + synthCacheWrite,
+                                            cacheWriteTokens + synthUsage.cacheWriteTokens,
                                         costUsdMicro:
                                             costUsdMicro + synthesisExtraCostUsdMicro,
                                         durationMs:

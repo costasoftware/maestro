@@ -16,7 +16,8 @@
  * unrecognised model never crashes the cost call. Add the suffixed id
  * to the table when the provider publishes one.
  */
-export interface PricingRow {
+/** One rate card: per-million-token USD rates for every billed leg. */
+export interface PricingRates {
     /** Per-million input tokens, USD. */
     input: number
     /** Per-million output tokens, USD. */
@@ -31,13 +32,30 @@ export interface PricingRow {
     /**
      * Per-million cache-write tokens at the 1-hour TTL, USD. Anthropic
      * charges ~2× input for the longer lifetime; providers with no such
-     * tier omit this and fall back to {@link PricingRow.cacheWrite}.
+     * tier omit this and fall back to {@link PricingRates.cacheWrite}.
      *
      * Optional so a host's `customPricing` map written against the old
      * shape keeps compiling — it just prices a 1h write as a 5m one,
      * which is the behaviour it already had.
      */
     cacheWrite1h?: number
+}
+
+/**
+ * A model's price: one rate card, or two chosen by prompt size.
+ *
+ * Claude Haiku 5.5 is the first model priced by prompt length — one card
+ * for prompts up to 100,000 tokens and a 5x card above it. The threshold
+ * counts the WHOLE prompt of one request (uncached input plus both cache
+ * legs), and it selects the card for every leg of that request, output
+ * included.
+ */
+export interface PricingRow extends PricingRates {
+    /**
+     * The card that applies once one request's prompt exceeds
+     * `aboveTokens`. Absent for a flat-priced model.
+     */
+    longPrompt?: PricingRates & { aboveTokens: number }
 }
 
 /**
@@ -53,6 +71,22 @@ export const MODEL_PRICING: Record<string, PricingRow> = {
         cacheRead: 0.1,
         cacheWrite: 1.25,
         cacheWrite1h: 2.0,
+    },
+    // A fixed id with no dated snapshot behind it — not a floating alias.
+    'claude-haiku-5-5': {
+        input: 0.1,
+        output: 0.5,
+        cacheRead: 0.01,
+        cacheWrite: 0.125,
+        cacheWrite1h: 0.2,
+        longPrompt: {
+            aboveTokens: 100_000,
+            input: 0.5,
+            output: 2.5,
+            cacheRead: 0.05,
+            cacheWrite: 0.625,
+            cacheWrite1h: 1.0,
+        },
     },
     'claude-sonnet-4-6': {
         input: 3.0,
@@ -158,13 +192,22 @@ export function usageFromProvider(usage: {
 }
 
 /**
- * Estimate USD cost for a token-usage block. When `modelId` matches
- * a known model in `MODEL_PRICING` (or in the optional `customPricing`
+ * Estimate USD cost for ONE provider request. When `modelId` matches a
+ * known model in `MODEL_PRICING` (or in the optional `customPricing`
  * override map) the exact rate applies; otherwise `BLENDED_PRICING`
  * is used.
  *
  * `customPricing` is shallow-merged on top of the default table — host
  * entries override built-ins when the ids collide.
+ *
+ * ## One request, not a turn
+ *
+ * For a model with a {@link PricingRow.longPrompt} card the card is picked
+ * from `usage`'s own prompt size, so `usage` must be what ONE request
+ * consumed. A tool loop is several requests that each re-send the prompt:
+ * five 30k-token steps summed into one block read as a 150k-token prompt
+ * and price every step on the long card — 5x the real cost. Price the
+ * steps one by one with {@link estimateRequestsCost}.
  */
 export function estimateCost(
     usage: TokenUsage,
@@ -174,7 +217,10 @@ export function estimateCost(
     const merged = customPricing
         ? { ...MODEL_PRICING, ...customPricing }
         : MODEL_PRICING
-    const price = (modelId && merged[modelId]) || BLENDED_PRICING
+    const row = (modelId && merged[modelId]) || BLENDED_PRICING
+    const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite
+    const price =
+        row.longPrompt && promptTokens > row.longPrompt.aboveTokens ? row.longPrompt : row
     // A 1h write costs more than a 5m one. Falling back to `cacheWrite`
     // when `cacheWrite1h` is absent keeps a provider without the tier —
     // and a host's custom row written before this field existed — priced
@@ -190,4 +236,16 @@ export function estimateCost(
             usage.cacheWrite * cacheWriteRate) /
         1_000_000
     )
+}
+
+/**
+ * Sum of {@link estimateCost} over each request of a multi-request turn
+ * (a tool loop's steps, a recovery call), each priced on its own card.
+ */
+export function estimateRequestsCost(
+    requests: readonly TokenUsage[],
+    modelId?: string | null,
+    customPricing?: Record<string, PricingRow>
+): number {
+    return requests.reduce((sum, usage) => sum + estimateCost(usage, modelId, customPricing), 0)
 }

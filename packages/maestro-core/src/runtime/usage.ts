@@ -32,6 +32,8 @@
  * `usageFromProvider`'s job and must not be duplicated here.
  */
 
+import { estimateRequestsCost, usageFromProvider } from '../cost.js'
+
 /**
  * The subset of the AI SDK's `LanguageModelUsage` this kernel prices on.
  * Every field is optional: a provider that reports nothing yields zeros
@@ -96,4 +98,68 @@ export function readResultUsage(result: {
     totalUsage?: unknown
 }): TurnUsage {
     return readProviderUsage(result.totalUsage ?? result.usage ?? null)
+}
+
+/**
+ * One {@link TurnUsage} per provider request of a `generateText` result or
+ * a `streamText` `onFinish` event — one per tool-loop step.
+ *
+ * Pricing needs the requests apart: a model priced by prompt size picks
+ * its card per request (see `estimateCost`), and a sum of five steps is
+ * not a five-times-larger prompt. It also stops reading the wrong total:
+ * the SDK's `usage` is the LAST step only, so a stream's `onFinish` that
+ * priced `event.usage` dropped every earlier step of the loop.
+ *
+ * Falls back to the result's own usage when it carries no steps (a mock,
+ * an older SDK) so the turn is never priced at zero.
+ */
+export function readRequestUsages(result: {
+    steps?: unknown
+    usage?: unknown
+    totalUsage?: unknown
+}): TurnUsage[] {
+    const steps = Array.isArray(result.steps) ? (result.steps as unknown[]) : []
+    const fromSteps = steps.map((step) =>
+        readProviderUsage(
+            step !== null && typeof step === 'object' ? (step as { usage?: unknown }).usage : null
+        )
+    )
+    if (fromSteps.some((u) => u.inputTokens > 0 || u.outputTokens > 0)) return fromSteps
+    return [readResultUsage(result)]
+}
+
+/** Sum of the per-request usages — the turn totals persisted on the row. */
+export function sumTurnUsage(requests: readonly TurnUsage[]): TurnUsage {
+    return requests.reduce<TurnUsage>(
+        (total, u) => ({
+            inputTokens: total.inputTokens + u.inputTokens,
+            outputTokens: total.outputTokens + u.outputTokens,
+            cacheReadTokens: total.cacheReadTokens + u.cacheReadTokens,
+            cacheWriteTokens: total.cacheWriteTokens + u.cacheWriteTokens,
+        }),
+        { ...ZERO }
+    )
+}
+
+/**
+ * USD cost of a turn's requests, each split by `usageFromProvider` and
+ * priced on its own card.
+ */
+export function estimateTurnCost(
+    requests: readonly TurnUsage[],
+    modelId: string | null | undefined,
+    cacheWriteTtl?: '5m' | '1h'
+): number {
+    return estimateRequestsCost(
+        requests.map((u) =>
+            usageFromProvider({
+                inputTokens: u.inputTokens,
+                outputTokens: u.outputTokens,
+                cachedInputTokens: u.cacheReadTokens,
+                cacheWriteTokens: u.cacheWriteTokens,
+                cacheWriteTtl,
+            })
+        ),
+        modelId
+    )
 }

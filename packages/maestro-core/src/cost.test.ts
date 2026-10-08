@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { BLENDED_PRICING, estimateCost, MODEL_PRICING, usageFromProvider } from './cost.js'
+import {
+    BLENDED_PRICING,
+    estimateCost,
+    estimateRequestsCost,
+    MODEL_PRICING,
+    usageFromProvider,
+} from './cost.js'
 
 describe('estimateCost', () => {
     it('uses the exact rate for a known model id', () => {
@@ -200,5 +206,106 @@ describe('estimateCost cache-write TTL rates', () => {
                 'who-knows'
             )
         ).toBeCloseTo(BLENDED_PRICING.cacheWrite1h ?? 0, 6)
+    })
+})
+
+describe('prompt-length pricing (Claude Haiku 5.5)', () => {
+    const HAIKU_5_5 = 'claude-haiku-5-5'
+
+    it('prices a prompt of exactly 100k tokens on the short card', () => {
+        // 100k * $0.10/M + 1k * $0.50/M
+        const cost = estimateCost(
+            { input: 100_000, output: 1_000, cacheRead: 0, cacheWrite: 0 },
+            HAIKU_5_5
+        )
+        expect(cost).toBeCloseTo(0.0105, 6)
+    })
+
+    it('moves every leg, output included, to the long card above 100k', () => {
+        // 100,001 * $0.50/M + 1k * $2.50/M
+        const cost = estimateCost(
+            { input: 100_001, output: 1_000, cacheRead: 0, cacheWrite: 0 },
+            HAIKU_5_5
+        )
+        expect(cost).toBeCloseTo(0.0525005, 7)
+    })
+
+    it('counts both cache legs toward the threshold', () => {
+        // 10k uncached + 90k read + 5k written = 105k prompt -> long card.
+        const cost = estimateCost(
+            { input: 10_000, output: 0, cacheRead: 90_000, cacheWrite: 5_000 },
+            HAIKU_5_5
+        )
+        // 10k * 0.50 + 90k * 0.05 + 5k * 0.625
+        expect(cost).toBeCloseTo((5_000 + 4_500 + 3_125) / 1_000_000, 9)
+    })
+
+    it('prices a 1h write on the long card at its own 1h rate', () => {
+        const cost = estimateCost(
+            { input: 0, output: 0, cacheRead: 0, cacheWrite: 200_000, cacheWriteTtl: '1h' },
+            HAIKU_5_5
+        )
+        expect(cost).toBeCloseTo(0.2, 6)
+    })
+
+    it('leaves a flat-priced model on its one card at any prompt size', () => {
+        const cost = estimateCost(
+            { input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 },
+            'claude-haiku-4-5-20251001'
+        )
+        expect(cost).toBeCloseTo(1.0, 6)
+    })
+
+    it('honours a host longPrompt card on a custom row', () => {
+        const cost = estimateCost(
+            { input: 20, output: 0, cacheRead: 0, cacheWrite: 0 },
+            'custom-tiered',
+            {
+                'custom-tiered': {
+                    input: 1,
+                    output: 1,
+                    cacheRead: 1,
+                    cacheWrite: 1,
+                    longPrompt: { aboveTokens: 10, input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 },
+                },
+            }
+        )
+        expect(cost).toBeCloseTo(20, 6)
+    })
+})
+
+describe('estimateRequestsCost', () => {
+    it('prices each step of a tool loop on its own card, not the summed prompt', () => {
+        // Five steps re-sending a 30k-token prompt. Each one is a short-card
+        // request; summed into one block they read as a 150k prompt.
+        const step = { input: 30_000, output: 200, cacheRead: 0, cacheWrite: 0 }
+        const steps = Array.from({ length: 5 }, () => ({ ...step }))
+
+        const perStep = estimateRequestsCost(steps, 'claude-haiku-5-5')
+        expect(perStep).toBeCloseTo(5 * (30_000 * 0.1 + 200 * 0.5) / 1_000_000, 9)
+
+        const summed = estimateCost(
+            { input: 150_000, output: 1_000, cacheRead: 0, cacheWrite: 0 },
+            'claude-haiku-5-5'
+        )
+        expect(summed / perStep).toBeCloseTo(5, 6)
+    })
+
+    it('equals the summed estimate for a flat-priced model', () => {
+        const steps = [
+            { input: 1_000, output: 10, cacheRead: 5_000, cacheWrite: 0 },
+            { input: 2_000, output: 20, cacheRead: 0, cacheWrite: 3_000 },
+        ]
+        expect(estimateRequestsCost(steps, 'claude-sonnet-4-6')).toBeCloseTo(
+            estimateCost(
+                { input: 3_000, output: 30, cacheRead: 5_000, cacheWrite: 3_000 },
+                'claude-sonnet-4-6'
+            ),
+            12
+        )
+    })
+
+    it('returns 0 for no requests', () => {
+        expect(estimateRequestsCost([], 'claude-haiku-5-5')).toBe(0)
     })
 })

@@ -27,8 +27,11 @@ export {
     type RunOneShotTurnToolCall,
 } from './run-one-shot-turn.js'
 export {
+    estimateTurnCost,
     type ProviderUsageLike,
     readProviderUsage,
+    readRequestUsages,
     readResultUsage,
+    sumTurnUsage,
     type TurnUsage,
 } from './usage.js'

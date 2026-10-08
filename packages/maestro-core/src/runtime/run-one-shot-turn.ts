@@ -9,7 +9,6 @@ import {
 import { buildAiSdkTools } from '../adapters/ai-sdk.js'
 import { applyCacheBreakpoints, type CacheTtl } from '../cache-control.js'
 import type { BaseToolContext } from '../context.js'
-import { estimateCost, usageFromProvider } from '../cost.js'
 import { selectChatModel, type ModelTier } from '../models.js'
 import type { AuditStore } from '../ports/audit-store.js'
 import { type Clock, SystemClock } from '../ports/clock.js'
@@ -25,7 +24,7 @@ import type { AgentToolDefinition } from '../tool.js'
 import { decideEmptyRecovery, type EmptyRecoveryMode } from './empty-recovery.js'
 import { loadMemoryBlock } from './memory.js'
 import { AiQuotaDeniedError, checkAndEnforce } from './quota.js'
-import { readResultUsage } from './usage.js'
+import { estimateTurnCost, readRequestUsages, sumTurnUsage } from './usage.js'
 
 /**
  * Single-shot turn entry point — the non-streaming sibling of
@@ -174,6 +173,14 @@ export interface RunOneShotTurnArgs<TCtx extends BaseToolContext<string>> {
      * bounded output length.
      */
     maxOutputTokens?: number
+    /**
+     * Provider options forwarded to every `generateText` call of the turn
+     * — the primary loop and the empty-recovery synthesis. Hosts set
+     * per-provider request knobs here, e.g.
+     * `{ anthropic: { thinking: { type: 'disabled' } } }` to keep a model
+     * that thinks by default inside a tight `maxOutputTokens`.
+     */
+    providerOptions?: Parameters<typeof generateText>[0]['providerOptions']
     /**
      * Forwarded to `generateText`. Defaults to `'auto'` (model decides).
      *
@@ -437,6 +444,7 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
             ...(typeof args.maxOutputTokens === 'number'
                 ? { maxOutputTokens: args.maxOutputTokens }
                 : {}),
+            ...(args.providerOptions ? { providerOptions: args.providerOptions } : {}),
         })
     } catch (e) {
         const isAbort =
@@ -470,29 +478,18 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
     }
 
     // ── 6. Token + cost accounting (primary call) ───────────────────
-    // generateText returns LanguageModelUsage on `.usage` and the
-    // cross-step sum on `.totalUsage`. For tool-loop multi-step calls
-    // we want the rolled-up totals so the persisted row reflects the
-    // full cost, not just the last step.
-    const primaryUsage = readResultUsage(primaryResult)
+    // A tool loop is one provider request per step. The persisted row
+    // carries the summed totals; the cost is priced request by request,
+    // because a model priced by prompt size picks its card per request
+    // and the sum of five steps is not one five-times-larger prompt.
+    const primaryRequests = readRequestUsages(primaryResult)
+    const primaryUsage = sumTurnUsage(primaryRequests)
     let tokensIn = primaryUsage.inputTokens
     let tokensOut = primaryUsage.outputTokens
     let cacheReadTokens = primaryUsage.cacheReadTokens
     let cacheWriteTokens = primaryUsage.cacheWriteTokens
 
-    // `tokensIn` is the provider's TOTAL prompt size and already contains
-    // BOTH cache figures; `usageFromProvider` splits them so a cached token
-    // is billed once, at its own rate.
-    let costUsd = estimateCost(
-        usageFromProvider({
-            inputTokens: tokensIn,
-            outputTokens: tokensOut,
-            cachedInputTokens: cacheReadTokens,
-            cacheWriteTokens,
-            cacheWriteTtl: args.promptCacheTtl,
-        }),
-        selection.modelId
-    )
+    let costUsd = estimateTurnCost(primaryRequests, selection.modelId, args.promptCacheTtl)
     let costUsdMicro = Math.max(0, Math.round(costUsd * 1_000_000))
 
     // ── 7. Empty-recovery classifier ────────────────────────────────
@@ -544,6 +541,7 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
                 ...(typeof args.maxOutputTokens === 'number'
                     ? { maxOutputTokens: args.maxOutputTokens }
                     : {}),
+                ...(args.providerOptions ? { providerOptions: args.providerOptions } : {}),
             })
 
             const synthText = typeof synthesisResult.text === 'string' ? synthesisResult.text : ''
@@ -551,22 +549,14 @@ export async function runOneShotTurn<TCtx extends BaseToolContext<string>>(
                 synthText.trim().length > 0
                     ? synthText
                     : recoveryDecision.fallbackText ?? ''
-            const synthUsage = readResultUsage(synthesisResult)
+            const synthRequests = readRequestUsages(synthesisResult)
+            const synthUsage = sumTurnUsage(synthRequests)
             tokensIn += synthUsage.inputTokens
             tokensOut += synthUsage.outputTokens
             cacheReadTokens += synthUsage.cacheReadTokens
             cacheWriteTokens += synthUsage.cacheWriteTokens
 
-            costUsd = estimateCost(
-                usageFromProvider({
-                    inputTokens: tokensIn,
-                    outputTokens: tokensOut,
-                    cachedInputTokens: cacheReadTokens,
-                    cacheWriteTokens,
-                    cacheWriteTtl: args.promptCacheTtl,
-                }),
-                selection.modelId
-            )
+            costUsd += estimateTurnCost(synthRequests, selection.modelId, args.promptCacheTtl)
             costUsdMicro = Math.max(0, Math.round(costUsd * 1_000_000))
             synthFinishedAt = clock.now()
         } catch (e) {
